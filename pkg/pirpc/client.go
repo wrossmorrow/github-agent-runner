@@ -31,10 +31,11 @@ type Event = map[string]any
 // Client manages a `pi --mode rpc` child process and multiplexes command
 // responses and streaming events.
 type Client struct {
-	bin  string
-	args []string
-	dir  string
-	env  []string
+	bin    string
+	args   []string
+	dir    string
+	env    []string
+	Stderr io.Writer
 
 	writeMu sync.Mutex
 	stdin   io.WriteCloser
@@ -100,7 +101,11 @@ func (c *Client) Start() error {
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
-			log.Printf("pi stderr: %s", sc.Text())
+			line := sc.Text()
+			log.Printf("pi stderr: %s", line)
+			if c.Stderr != nil {
+				_, _ = fmt.Fprintf(c.Stderr, "pi stderr: %s\n", line)
+			}
 		}
 	}()
 

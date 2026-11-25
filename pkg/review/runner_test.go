@@ -38,6 +38,21 @@ func TestHelperPiReview(t *testing.T) {
 			continue
 		}
 
+		if mode == "model_error" {
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":         "assistant",
+						"stopReason":   "error",
+						"errorMessage": "401 Unauthorized",
+						"content":      []any{},
+					},
+				},
+			})
+			continue
+		}
+
 		_ = enc.Encode(map[string]any{"type": "turn_start"})
 		_ = enc.Encode(map[string]any{"type": "tool_execution_start", "toolName": "read"})
 		_ = enc.Encode(map[string]any{"type": "tool_execution_end", "result": map[string]any{"lines": 20}})
@@ -156,5 +171,75 @@ func TestRunnerMaxTurnsExceeded(t *testing.T) {
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "maxTurns") {
 		t.Fatalf("expected maxTurns error, got %v", err)
+	}
+}
+
+func TestWritePiConfigDir(t *testing.T) {
+	dir, err := writePiConfigDir(Config{
+		Model:           "flint",
+		GatewayEndpoint: "http://host.docker.internal:11500/v1",
+	}, Request{
+		Repo:     "my-org/my-repo",
+		RunID:    "999",
+		PRNumber: 17,
+	}, "base instructions", "secret-tok\n")
+	if err != nil {
+		t.Fatalf("writePiConfigDir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	agentsRaw, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil || strings.TrimSpace(string(agentsRaw)) != "base instructions" {
+		t.Fatalf("unexpected AGENTS.md: %q err=%v", string(agentsRaw), err)
+	}
+
+	modelsRaw, err := os.ReadFile(filepath.Join(dir, "models.json"))
+	if err != nil {
+		t.Fatalf("reading models.json: %v", err)
+	}
+	var parsed piModelsFile
+	if err := json.Unmarshal(modelsRaw, &parsed); err != nil {
+		t.Fatalf("unmarshaling models.json: %v", err)
+	}
+	gw, ok := parsed.Providers["gateway"]
+	if !ok {
+		t.Fatalf("expected gateway provider, got %+v", parsed.Providers)
+	}
+	if gw.BaseURL != "http://host.docker.internal:11500/v1" || gw.API != "openai-completions" || gw.APIKey != "secret-tok" || !gw.AuthHeader {
+		t.Fatalf("unexpected provider config: %+v", gw)
+	}
+	if gw.Headers["Authorization"] != "Bearer secret-tok" {
+		t.Fatalf("unexpected Authorization header: %q", gw.Headers["Authorization"])
+	}
+	if gw.Headers["x-github-repo"] != "my-org/my-repo" || gw.Headers["x-github-pr"] != "17" {
+		t.Fatalf("unexpected attribution headers: %+v", gw.Headers)
+	}
+	if len(gw.Models) != 1 || gw.Models[0].ID != "flint" || gw.Models[0].Compat.MaxTokensField != "max_tokens" {
+		t.Fatalf("unexpected model config: %+v", gw.Models)
+	}
+}
+
+func TestRunnerModelErrorSurfaced(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_WANT_REVIEW_HELPER", "1")
+	t.Setenv("HELPER_MODE", "model_error")
+
+	runner := &Runner{
+		Config: Config{
+			PiBin:  exe,
+			PiArgs: []string{"-test.run=TestHelperPiReview"},
+			Limits: v1alpha1.LimitsSpec{MaxTurns: 5, MaxDuration: "5s"},
+		},
+	}
+
+	_, err = runner.Run(context.Background(), Request{
+		Workspace:    t.TempDir(),
+		Instructions: "Check everything",
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
+		t.Fatalf("expected surfaced model error, got %v", err)
 	}
 }

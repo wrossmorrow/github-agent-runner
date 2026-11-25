@@ -15,23 +15,31 @@ import (
 )
 
 const (
-	DefaultRunnerImage     = "ghcr.io/actions/actions-runner:latest"
-	DefaultProxyImage      = "ubuntu/squid:latest"
-	DefaultGitHubAuthImage = "ghcr.io/agentrunner/github-auth:latest"
-	DefaultAgentRunnerPort = 8788
-	DefaultProxyPort       = 3128
-	SharedWorkPath         = "/home/runner/_work"
-	SharedFSGroup          = 1001
+	DefaultRunnerImage            = "ghcr.io/actions/actions-runner:latest"
+	DefaultProxyImage             = "ubuntu/squid:latest"
+	DefaultGitHubAuthImage        = "ghcr.io/agentrunner/github-auth:latest"
+	DefaultImagePullPolicy        = "IfNotPresent"
+	DefaultARCVersion             = "0.15.1"
+	DefaultARCControllerNamespace = "arc-systems"
+	DefaultARCControllerSA        = "arc-gha-rs-controller"
+	DefaultAgentRunnerPort        = 8788
+	DefaultProxyPort              = 3128
+	SharedWorkPath                = "/home/runner/_work"
+	SharedFSGroup                 = 1001
 )
 
 // Options customizes defaults during manifest rendering.
 type Options struct {
-	DefaultRunnerImage     string
-	DefaultProxyImage      string
-	DefaultGitHubAuthImage string
-	AgentRunnerPort        int
-	ProxyPort              int
-	ClusterEgressAllowlist []string
+	DefaultRunnerImage          string
+	DefaultProxyImage           string
+	DefaultGitHubAuthImage      string
+	ImagePullPolicy             string
+	ARCVersion                  string
+	ARCControllerNamespace      string
+	ARCControllerServiceAccount string
+	AgentRunnerPort             int
+	ProxyPort                   int
+	ClusterEgressAllowlist      []string
 }
 
 func (o Options) withDefaults() Options {
@@ -43,6 +51,18 @@ func (o Options) withDefaults() Options {
 	}
 	if o.DefaultGitHubAuthImage == "" {
 		o.DefaultGitHubAuthImage = DefaultGitHubAuthImage
+	}
+	if o.ImagePullPolicy == "" {
+		o.ImagePullPolicy = DefaultImagePullPolicy
+	}
+	if o.ARCVersion == "" {
+		o.ARCVersion = DefaultARCVersion
+	}
+	if o.ARCControllerNamespace == "" {
+		o.ARCControllerNamespace = DefaultARCControllerNamespace
+	}
+	if o.ARCControllerServiceAccount == "" {
+		o.ARCControllerServiceAccount = DefaultARCControllerSA
 	}
 	if o.AgentRunnerPort == 0 {
 		o.AgentRunnerPort = DefaultAgentRunnerPort
@@ -66,10 +86,12 @@ type K8sObject = map[string]any
 
 // Bundle holds all Kubernetes manifests derived from one deployment + toolchain.
 type Bundle struct {
-	AgentConfigMap       K8sObject
-	EgressConfigMap      K8sObject
-	AutoscalingRunnerSet K8sObject
-	NetworkPolicy        K8sObject
+	AgentConfigMap           K8sObject
+	EgressConfigMap          K8sObject
+	ARCControllerRole        K8sObject
+	ARCControllerRoleBinding K8sObject
+	AutoscalingRunnerSet     K8sObject
+	NetworkPolicy            K8sObject
 }
 
 // Objects returns the bundle resources in recommended apply order.
@@ -78,7 +100,18 @@ func (b *Bundle) Objects() []K8sObject {
 		b.AgentConfigMap,
 		b.EgressConfigMap,
 		b.NetworkPolicy,
+		b.ARCControllerRole,
+		b.ARCControllerRoleBinding,
 		b.AutoscalingRunnerSet,
+	}
+}
+
+// List wraps Objects in a Kubernetes v1 List suitable for `kubectl apply -f -`.
+func (b *Bundle) List() K8sObject {
+	return K8sObject{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items":      b.Objects(),
 	}
 }
 
@@ -122,14 +155,17 @@ func Render(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToo
 		return nil, err
 	}
 	egressCM, gatewayPort := buildEgressConfigMap(dep, tc, ns, egressCMName, opts)
+	arcRole, arcRoleBinding := buildARCRBAC(dep, ns, opts)
 	runnerSet := buildAutoscalingRunnerSet(dep, tc, ns, agentCMName, egressCMName, opts)
 	netPol := buildNetworkPolicy(dep, ns, gatewayPort)
 
 	return &Bundle{
-		AgentConfigMap:       agentCM,
-		EgressConfigMap:      egressCM,
-		AutoscalingRunnerSet: runnerSet,
-		NetworkPolicy:        netPol,
+		AgentConfigMap:           agentCM,
+		EgressConfigMap:          egressCM,
+		ARCControllerRole:        arcRole,
+		ARCControllerRoleBinding: arcRoleBinding,
+		AutoscalingRunnerSet:     runnerSet,
+		NetworkPolicy:            netPol,
 	}, nil
 }
 
@@ -216,8 +252,10 @@ func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Ag
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "http_port 127.0.0.1:%d\n", opts.ProxyPort)
-	b.WriteString("access_log stdio:/dev/stdout\n")
-	b.WriteString("cache_log stdio:/dev/stderr\n")
+	b.WriteString("max_filedescriptors 1024\n")
+	b.WriteString("pid_filename /tmp/squid.pid\n")
+	b.WriteString("access_log stdio:/var/log/squid/access.log\n")
+	b.WriteString("cache_log /var/log/squid/cache.log\n")
 	b.WriteString("cache deny all\n")
 	for _, d := range domains {
 		fmt.Fprintf(&b, "acl allowed_domains dstdomain %s\n", d)
@@ -310,16 +348,16 @@ func buildAutoscalingRunnerSet(
 	}
 
 	agentSidecar := K8sObject{
-		"name":          "agent",
-		"image":         tc.Spec.Image,
-		"restartPolicy": "Always",
-		"command":       []string{"/usr/local/bin/agentrunnerd"},
-		"env":           agentEnv,
-		"volumeMounts":  agentMounts,
+		"name":            "agent",
+		"image":           tc.Spec.Image,
+		"imagePullPolicy": opts.ImagePullPolicy,
+		"restartPolicy":   "Always",
+		"command":         []string{"/usr/local/bin/agentrunnerd"},
+		"env":             agentEnv,
+		"volumeMounts":    agentMounts,
 		"readinessProbe": K8sObject{
-			"httpGet": K8sObject{
-				"path": "/healthz",
-				"port": opts.AgentRunnerPort,
+			"exec": K8sObject{
+				"command": []string{"curl", "-fsS", fmt.Sprintf("http://127.0.0.1:%d/healthz", opts.AgentRunnerPort)},
 			},
 			"initialDelaySeconds": 1,
 			"periodSeconds":       2,
@@ -337,10 +375,11 @@ func buildAutoscalingRunnerSet(
 	}
 
 	egressSidecar := K8sObject{
-		"name":          "egress-proxy",
-		"image":         opts.DefaultProxyImage,
-		"restartPolicy": "Always",
-		"command":       []string{"squid", "-N", "-f", "/etc/squid/conf.d/squid.conf"},
+		"name":            "egress-proxy",
+		"image":           opts.DefaultProxyImage,
+		"imagePullPolicy": opts.ImagePullPolicy,
+		"restartPolicy":   "Always",
+		"command":         []string{"squid", "-N", "-f", "/etc/squid/conf.d/squid.conf"},
 		"volumeMounts": []K8sObject{
 			{"name": "egress-config", "mountPath": "/etc/squid/conf.d", "readOnly": true},
 		},
@@ -349,6 +388,7 @@ func buildAutoscalingRunnerSet(
 	ghAuthMounts := []K8sObject{
 		{"name": "gh-token", "mountPath": "/tokens"},
 	}
+	var ghAuthEnv []K8sObject
 	if dep.Spec.Agent.GitHubAppSecretRef != nil {
 		volumes = append(volumes, K8sObject{
 			"name":   "gh-app-key",
@@ -356,23 +396,41 @@ func buildAutoscalingRunnerSet(
 		})
 		ghAuthMounts = append(ghAuthMounts, K8sObject{
 			"name":      "gh-app-key",
-			"mountPath": "/run/secrets/gh_private_key",
+			"mountPath": "/run/secrets/gh-app",
 			"readOnly":  true,
 		})
+		keyFile := dep.Spec.Agent.GitHubAppSecretRef.Key
+		if keyFile == "" {
+			keyFile = "private-key.pem"
+		}
+		ghAuthEnv = append(ghAuthEnv, K8sObject{
+			"name":  "GITHUB_APP_PRIVATE_KEY_PATH",
+			"value": "/run/secrets/gh-app/" + keyFile,
+		})
 	}
-	var ghAuthEnv []K8sObject
 	if dep.Spec.Agent.GitHubAppID != "" {
 		ghAuthEnv = append(ghAuthEnv, K8sObject{"name": "GITHUB_APP_ID", "value": dep.Spec.Agent.GitHubAppID})
 	}
 	if dep.Spec.Agent.GitHubInstallID != "" {
 		ghAuthEnv = append(ghAuthEnv, K8sObject{"name": "GITHUB_APP_INSTALLATION_ID", "value": dep.Spec.Agent.GitHubInstallID})
 	}
+	if repoName := extractRepoName(dep.Spec.Runner.GitHubConfigURL); repoName != "" {
+		ghAuthEnv = append(ghAuthEnv, K8sObject{"name": "GITHUB_REPO_NAME", "value": repoName})
+	}
 
 	ghAuthSidecar := K8sObject{
-		"name":          "github-auth",
-		"image":         opts.DefaultGitHubAuthImage,
-		"restartPolicy": "Always",
-		"volumeMounts":  ghAuthMounts,
+		"name":            "github-auth",
+		"image":           opts.DefaultGitHubAuthImage,
+		"imagePullPolicy": opts.ImagePullPolicy,
+		"restartPolicy":   "Always",
+		"volumeMounts":    ghAuthMounts,
+		"readinessProbe": K8sObject{
+			"exec": K8sObject{
+				"command": []string{"test", "-s", "/tokens/token"},
+			},
+			"initialDelaySeconds": 1,
+			"periodSeconds":       2,
+		},
 	}
 	if len(ghAuthEnv) > 0 {
 		ghAuthSidecar["env"] = ghAuthEnv
@@ -398,8 +456,9 @@ func buildAutoscalingRunnerSet(
 				},
 				"containers": []K8sObject{
 					{
-						"name":  "runner",
-						"image": runnerImage,
+						"name":    "runner",
+						"image":   runnerImage,
+						"command": []string{"/home/runner/run.sh"},
 						"volumeMounts": []K8sObject{
 							{"name": "work", "mountPath": SharedWorkPath},
 						},
@@ -413,16 +472,33 @@ func buildAutoscalingRunnerSet(
 		runnerSpec["githubConfigSecret"] = dep.Spec.Runner.GitHubConfigSecret
 	}
 
+	labels := commonLabels(dep)
+	labels["app.kubernetes.io/version"] = opts.ARCVersion
+	labels["app.kubernetes.io/part-of"] = "gha-rs"
+	labels["app.kubernetes.io/component"] = "runner-scale-set"
+
 	return K8sObject{
 		"apiVersion": "actions.github.com/v1alpha1",
 		"kind":       "AutoscalingRunnerSet",
 		"metadata": K8sObject{
 			"name":      dep.Spec.Runner.RunnerScaleSetName,
 			"namespace": ns,
-			"labels":    commonLabels(dep),
+			"labels":    labels,
 		},
 		"spec": runnerSpec,
 	}
+}
+
+func extractRepoName(configURL string) string {
+	u, err := url.Parse(configURL)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		return parts[0] + "/" + parts[1]
+	}
+	return ""
 }
 
 func buildNetworkPolicy(dep *v1alpha1.AgenticRunnerDeployment, ns string, gatewayPort int) K8sObject {
@@ -461,6 +537,72 @@ func buildNetworkPolicy(dep *v1alpha1.AgenticRunnerDeployment, ns string, gatewa
 			},
 		},
 	}
+}
+
+func buildARCRBAC(dep *v1alpha1.AgenticRunnerDeployment, ns string, opts Options) (K8sObject, K8sObject) {
+	name := dep.Spec.Runner.RunnerScaleSetName + "-arc-manager"
+	labels := commonLabels(dep)
+
+	role := K8sObject{
+		"apiVersion": "rbac.authorization.k8s.io/v1",
+		"kind":       "Role",
+		"metadata": K8sObject{
+			"name":      name,
+			"namespace": ns,
+			"labels":    labels,
+		},
+		"rules": []K8sObject{
+			{
+				"apiGroups": []string{""},
+				"resources": []string{"pods"},
+				"verbs":     []string{"create", "delete", "get"},
+			},
+			{
+				"apiGroups": []string{""},
+				"resources": []string{"pods/status"},
+				"verbs":     []string{"get"},
+			},
+			{
+				"apiGroups": []string{""},
+				"resources": []string{"secrets"},
+				"verbs":     []string{"create", "delete", "get", "list", "patch", "update"},
+			},
+			{
+				"apiGroups": []string{""},
+				"resources": []string{"serviceaccounts"},
+				"verbs":     []string{"create", "delete", "get", "patch", "update"},
+			},
+			{
+				"apiGroups": []string{"rbac.authorization.k8s.io"},
+				"resources": []string{"roles", "rolebindings"},
+				"verbs":     []string{"create", "delete", "get", "list", "patch", "update", "watch"},
+			},
+		},
+	}
+
+	binding := K8sObject{
+		"apiVersion": "rbac.authorization.k8s.io/v1",
+		"kind":       "RoleBinding",
+		"metadata": K8sObject{
+			"name":      name,
+			"namespace": ns,
+			"labels":    labels,
+		},
+		"roleRef": K8sObject{
+			"apiGroup": "rbac.authorization.k8s.io",
+			"kind":     "Role",
+			"name":     name,
+		},
+		"subjects": []K8sObject{
+			{
+				"kind":      "ServiceAccount",
+				"name":      opts.ARCControllerServiceAccount,
+				"namespace": opts.ARCControllerNamespace,
+			},
+		},
+	}
+
+	return role, binding
 }
 
 func commonLabels(dep *v1alpha1.AgenticRunnerDeployment) map[string]string {

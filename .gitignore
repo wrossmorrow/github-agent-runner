@@ -17,6 +17,7 @@ coverage.*
 *.pem
 *.key
 kubeconfig*
+bots
 
 # OS and editor artifacts
 .DS_Store

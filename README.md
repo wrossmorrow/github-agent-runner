@@ -1,6 +1,6 @@
 # agentrunner
 
-Skeleton implementation of CRD-composed agentic self-hosted GitHub Actions runners on **ARC v2** (`AutoscalingRunnerSet`) using **Kubernetes native sidecars** and `pi --mode rpc`. See [PLAN.md](PLAN.md) for the full architecture sketch.
+Skeleton implementation of CRD-composed agentic self-hosted GitHub Actions runners on **ARC v2** (`AutoscalingRunnerSet`) using **Kubernetes native sidecars** and `pi --mode rpc`. See [PLAN.md](PLAN.md) for the architecture sketch and [docs/KIND_TESTING.md](docs/KIND_TESTING.md) for a local `kind` testing walkthrough.
 
 ## Layout
 

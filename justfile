@@ -42,3 +42,7 @@ render-summary:
 # build a toolchain sidecar image stage (agent, python, golang, rust, java17, java21)
 containerize toolchain="agent" image="agentrunner":
     docker build -f images/Dockerfile --target {{ toolchain }} -t {{ image }}-{{ toolchain }} .
+
+# build the github-auth token-minter sidecar image
+containerize-github-auth image="agentrunner":
+    docker build -f images/github-auth/Dockerfile -t {{ image }}-github-auth images/github-auth

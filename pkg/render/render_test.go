@@ -47,6 +47,8 @@ func sampleInputs() (*v1alpha1.AgenticRunnerDeployment, *v1alpha1.AgenticRunnerT
 				SystemPromptRef:    &v1alpha1.ConfigMapKeyRef{ConfigMapName: "org-review-policy"},
 				AgentsMD:           "Deployment override guidance.",
 				GitHubAppSecretRef: &v1alpha1.SecretRef{Name: "review-bot-key"},
+				GitHubAppID:        "12345",
+				GitHubInstallID:    "67890",
 			},
 		},
 	}
@@ -60,8 +62,18 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 		t.Fatalf("Render failed: %v", err)
 	}
 
-	if got := len(bundle.Objects()); got != 4 {
-		t.Fatalf("expected 4 objects, got %d", got)
+	if got := len(bundle.Objects()); got != 6 {
+		t.Fatalf("expected 6 objects, got %d", got)
+	}
+	if bundle.List()["kind"] != "List" {
+		t.Fatalf("expected List kind, got %v", bundle.List()["kind"])
+	}
+	if bundle.ARCControllerRole["kind"] != "Role" || bundle.ARCControllerRoleBinding["kind"] != "RoleBinding" {
+		t.Fatalf("expected Role and RoleBinding, got %v / %v", bundle.ARCControllerRole["kind"], bundle.ARCControllerRoleBinding["kind"])
+	}
+	subjects := bundle.ARCControllerRoleBinding["subjects"].([]K8sObject)
+	if subjects[0]["name"] != DefaultARCControllerSA || subjects[0]["namespace"] != DefaultARCControllerNamespace {
+		t.Fatalf("unexpected RoleBinding subject: %#v", subjects)
 	}
 
 	// Verify Agent ConfigMap
@@ -83,13 +95,18 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 	// Verify Squid allowlist includes cluster defaults, toolchain allowlist, and gateway host
 	egressData := bundle.EgressConfigMap["data"].(map[string]string)
 	squidConf := egressData["squid.conf"]
-	for _, want := range []string{"api.github.com", "proxy.golang.org", "agent-gateway.internal", "http_access deny all"} {
+	for _, want := range []string{"api.github.com", "proxy.golang.org", "agent-gateway.internal", "max_filedescriptors 1024", "/var/log/squid/cache.log", "http_access deny all"} {
 		if !strings.Contains(squidConf, want) {
 			t.Fatalf("squid.conf missing %q:\n%s", want, squidConf)
 		}
 	}
 
-	// Verify AutoscalingRunnerSet PodSpec
+	// Verify AutoscalingRunnerSet PodSpec & ARC version label
+	arsMeta := bundle.AutoscalingRunnerSet["metadata"].(K8sObject)
+	arsLabels := arsMeta["labels"].(map[string]string)
+	if arsLabels["app.kubernetes.io/version"] != DefaultARCVersion {
+		t.Fatalf("expected app.kubernetes.io/version=%q, got %q", DefaultARCVersion, arsLabels["app.kubernetes.io/version"])
+	}
 	spec := bundle.AutoscalingRunnerSet["spec"].(K8sObject)
 	if bundle.AutoscalingRunnerSet["kind"] != "AutoscalingRunnerSet" {
 		t.Fatalf("unexpected kind: %v", bundle.AutoscalingRunnerSet["kind"])
@@ -102,6 +119,10 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 	containers := podSpec["containers"].([]K8sObject)
 	if len(containers) != 1 || containers[0]["image"] != DefaultRunnerImage {
 		t.Fatalf("expected single stock runner container, got %#v", containers)
+	}
+	runnerCmd, _ := containers[0]["command"].([]string)
+	if len(runnerCmd) != 1 || runnerCmd[0] != "/home/runner/run.sh" {
+		t.Fatalf("expected runner command [/home/runner/run.sh], got %#v", containers[0]["command"])
 	}
 	runnerMounts := containers[0]["volumeMounts"].([]K8sObject)
 	if len(runnerMounts) != 1 || runnerMounts[0]["mountPath"] != SharedWorkPath {
@@ -117,12 +138,19 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 		if ic["restartPolicy"] != "Always" {
 			t.Fatalf("sidecar %v missing restartPolicy: Always", ic["name"])
 		}
+		if ic["imagePullPolicy"] != DefaultImagePullPolicy {
+			t.Fatalf("sidecar %v imagePullPolicy = %v, want %s", ic["name"], ic["imagePullPolicy"], DefaultImagePullPolicy)
+		}
 		byName[ic["name"].(string)] = ic
 	}
 
 	agent := byName["agent"]
 	if agent["image"] != tc.Spec.Image {
 		t.Fatalf("agent image = %v, want %v", agent["image"], tc.Spec.Image)
+	}
+	agentProbe := agent["readinessProbe"].(K8sObject)
+	if agentProbe["exec"] == nil {
+		t.Fatalf("expected agent exec readinessProbe for loopback, got %#v", agentProbe)
 	}
 	var sawWork, sawTokensRO bool
 	for _, vm := range agent["volumeMounts"].([]K8sObject) {
@@ -135,6 +163,30 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 	}
 	if !sawWork || !sawTokensRO {
 		t.Fatalf("agent mounts missing work=%v or ro tokens=%v", sawWork, sawTokensRO)
+	}
+
+	ghAuth := byName["github-auth"]
+	if ghAuth["readinessProbe"] == nil {
+		t.Fatal("expected github-auth readinessProbe")
+	}
+	var sawKeyDir bool
+	for _, vm := range ghAuth["volumeMounts"].([]K8sObject) {
+		if vm["name"] == "gh-app-key" && vm["mountPath"] == "/run/secrets/gh-app" && vm["readOnly"] == true {
+			sawKeyDir = true
+		}
+	}
+	if !sawKeyDir {
+		t.Fatalf("expected gh-app-key mounted at /run/secrets/gh-app, got %#v", ghAuth["volumeMounts"])
+	}
+	envMap := map[string]string{}
+	for _, e := range ghAuth["env"].([]K8sObject) {
+		envMap[e["name"].(string)] = e["value"].(string)
+	}
+	if envMap["GITHUB_APP_PRIVATE_KEY_PATH"] != "/run/secrets/gh-app/private-key.pem" {
+		t.Fatalf("unexpected key path env: %v", envMap)
+	}
+	if envMap["GITHUB_REPO_NAME"] != "my-org/my-repo" {
+		t.Fatalf("unexpected GITHUB_REPO_NAME: %v", envMap)
 	}
 
 	// Verify NetworkPolicy includes custom gateway port 8443

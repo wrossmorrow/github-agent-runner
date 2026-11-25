@@ -14,8 +14,21 @@ import (
 
 func main() {
 	example := flag.Bool("example", false, "render a built-in Go reviewer example")
+	asList := flag.Bool("list", false, "wrap output in a Kubernetes v1 List (for kubectl apply -f -)")
 	toolchainPath := flag.String("toolchain", "", "path to AgenticRunnerToolchain JSON")
 	deploymentPath := flag.String("deployment", "", "path to AgenticRunnerDeployment JSON")
+
+	repoURL := flag.String("repo-url", "", "override spec.runner.githubConfigUrl")
+	gateway := flag.String("gateway", "", "override spec.agent.gateway.endpoint")
+	model := flag.String("model", "", "override spec.agent.model")
+	image := flag.String("image", "", "override toolchain spec.image")
+	githubAuthImage := flag.String("github-auth-image", "", "override github-auth sidecar image")
+	githubAppID := flag.String("github-app-id", "", "override spec.agent.githubAppId")
+	githubInstallID := flag.String("github-install-id", "", "override spec.agent.githubAppInstallationId")
+	namespace := flag.String("namespace", "", "override deployment metadata.namespace")
+	arcVersion := flag.String("arc-version", render.DefaultARCVersion, "ARC controller version stamped onto AutoscalingRunnerSet labels")
+	arcControllerNS := flag.String("arc-controller-namespace", render.DefaultARCControllerNamespace, "namespace of the ARC controller ServiceAccount")
+	arcControllerSA := flag.String("arc-controller-sa", render.DefaultARCControllerSA, "ARC controller ServiceAccount name")
 	flag.Parse()
 
 	var tc *v1alpha1.AgenticRunnerToolchain
@@ -41,15 +54,49 @@ func main() {
 		}
 	}
 
-	bundle, err := render.Render(dep, tc, render.Options{})
+	if *repoURL != "" {
+		dep.Spec.Runner.GitHubConfigURL = *repoURL
+	}
+	if *gateway != "" {
+		dep.Spec.Agent.Gateway.Endpoint = *gateway
+	}
+	if *model != "" {
+		dep.Spec.Agent.Model = *model
+	}
+	if *image != "" {
+		tc.Spec.Image = *image
+	}
+	if *githubAppID != "" {
+		dep.Spec.Agent.GitHubAppID = *githubAppID
+	}
+	if *githubInstallID != "" {
+		dep.Spec.Agent.GitHubInstallID = *githubInstallID
+	}
+	if *namespace != "" {
+		dep.Metadata.Namespace = *namespace
+	}
+
+	opts := render.Options{
+		DefaultGitHubAuthImage:      *githubAuthImage,
+		ARCVersion:                  *arcVersion,
+		ARCControllerNamespace:      *arcControllerNS,
+		ARCControllerServiceAccount: *arcControllerSA,
+	}
+
+	bundle, err := render.Render(dep, tc, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "render failed: %v\n", err)
 		os.Exit(1)
 	}
 
+	var out any = bundle.Objects()
+	if *asList {
+		out = bundle.List()
+	}
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(bundle.Objects()); err != nil {
+	if err := enc.Encode(out); err != nil {
 		fmt.Fprintf(os.Stderr, "encoding output: %v\n", err)
 		os.Exit(1)
 	}

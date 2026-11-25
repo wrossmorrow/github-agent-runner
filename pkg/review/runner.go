@@ -66,6 +66,16 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	userPrompt := BuildUserPrompt(req, diffStat, hasRepoAgentsMD)
 
+	gatewayToken := strings.TrimSpace(os.Getenv("AGENT_GATEWAY_TOKEN"))
+	piDir, err := writePiConfigDir(r.Config, req, agentsMD, gatewayToken)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(piDir) }()
+
+	_, _ = fmt.Fprintf(logOut, "agentrunner: provider=%s model=%s gateway=%s hasGatewayToken=%v (len=%d)\n",
+		providerName(r.Config), r.Config.Model, r.Config.GatewayEndpoint, gatewayToken != "", len(gatewayToken))
+
 	bin := r.Config.PiBin
 	if bin == "" {
 		bin = "pi"
@@ -73,10 +83,14 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	args := r.Config.PiArgs
 	if len(args) == 0 {
 		args = []string{"--mode", "rpc"}
+		if r.Config.GatewayEndpoint != "" && r.Config.Model != "" {
+			args = append(args, "--provider", providerName(r.Config), "--model", r.Config.Model)
+		}
 	}
 
-	env := buildChildEnv(r.Config, req)
+	env := buildChildEnv(r.Config, req, piDir)
 	client := pirpc.NewClient(bin, args, req.Workspace, env)
+	client.Stderr = logOut
 	if err := client.Start(); err != nil {
 		return nil, fmt.Errorf("starting pi rpc: %w", err)
 	}
@@ -108,6 +122,13 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	reviewRes, err := ExtractReviewResult(finalText)
 	if err != nil {
+		preview := strings.TrimSpace(finalText)
+		if preview == "" {
+			preview = "<empty>"
+		} else if len(preview) > 400 {
+			preview = preview[:400] + "..."
+		}
+		_, _ = fmt.Fprintf(logOut, "pi final assistant text: %s\n", preview)
 		return nil, err
 	}
 
@@ -138,6 +159,7 @@ func streamUntilEnd(
 ) (string, int, error) {
 	turns := 0
 	var lastAssistantText string
+	var lastAssistantErr string
 	var inGroup bool
 	closeGroup := func() {
 		if inGroup {
@@ -175,13 +197,24 @@ func streamUntilEnd(
 				}
 				closeGroup()
 			case "message_end":
-				if text := extractAssistantText(ev["message"]); text != "" {
+				text, errMsg := extractAssistantOutcome(ev["message"])
+				if text != "" {
 					lastAssistantText = text
+				}
+				if errMsg != "" {
+					lastAssistantErr = errMsg
 				}
 			case "agent_end":
 				closeGroup()
-				if text := extractLastMessageFromAgentEnd(ev); text != "" {
+				text, errMsg := extractLastOutcomeFromAgentEnd(ev)
+				if text != "" {
 					lastAssistantText = text
+				}
+				if errMsg != "" {
+					lastAssistantErr = errMsg
+				}
+				if lastAssistantErr != "" && lastAssistantText == "" {
+					return "", turns, fmt.Errorf("pi model error: %s", lastAssistantErr)
 				}
 				return lastAssistantText, turns, nil
 			case "session_closed":
@@ -191,30 +224,41 @@ func streamUntilEnd(
 	}
 }
 
-func extractLastMessageFromAgentEnd(ev pirpc.Event) string {
+func extractLastOutcomeFromAgentEnd(ev pirpc.Event) (string, string) {
 	msgs, ok := ev["messages"].([]any)
 	if !ok {
-		return ""
+		return "", ""
 	}
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if text := extractAssistantText(msgs[i]); text != "" {
-			return text
+		text, errMsg := extractAssistantOutcome(msgs[i])
+		if text != "" || errMsg != "" {
+			return text, errMsg
 		}
 	}
-	return ""
+	return "", ""
 }
 
-func extractAssistantText(msgAny any) string {
+func extractAssistantOutcome(msgAny any) (string, string) {
 	msg, ok := msgAny.(map[string]any)
 	if !ok {
-		return ""
+		return "", ""
 	}
 	if role, _ := msg["role"].(string); role != "" && role != "assistant" {
-		return ""
+		return "", ""
 	}
+	var errMsg string
+	if stopReason, _ := msg["stopReason"].(string); stopReason == "error" {
+		errMsg, _ = msg["errorMessage"].(string)
+		if errMsg == "" {
+			errMsg = "assistant stopped with error"
+		}
+	} else if em, _ := msg["errorMessage"].(string); em != "" {
+		errMsg = em
+	}
+
 	switch c := msg["content"].(type) {
 	case string:
-		return c
+		return c, errMsg
 	case []any:
 		var parts []string
 		for _, item := range c {
@@ -228,9 +272,9 @@ func extractAssistantText(msgAny any) string {
 				}
 			}
 		}
-		return strings.Join(parts, "\n")
+		return strings.Join(parts, "\n"), errMsg
 	default:
-		return ""
+		return "", errMsg
 	}
 }
 
@@ -291,13 +335,15 @@ func readDiffStat(ctx context.Context, workspace, baseRef, headSHA string) strin
 	return out.String()
 }
 
-func buildChildEnv(cfg Config, req Request) []string {
+func buildChildEnv(cfg Config, req Request, piDir string) []string {
 	env := os.Environ()
 	add := func(k, v string) {
 		if v != "" {
 			env = append(env, k+"="+v)
 		}
 	}
+	add("PI_CODING_AGENT_DIR", piDir)
+	add("PI_SKIP_VERSION_CHECK", "1")
 	add("PI_MODEL", cfg.Model)
 	add("PI_PROVIDER", cfg.Provider)
 	add("AGENT_GATEWAY_ENDPOINT", cfg.GatewayEndpoint)
