@@ -49,9 +49,12 @@ containerize toolchain="agent" tag="latest":
         -t {{ image_repository }}/{{ image_name_prefix }}-{{ toolchain }}:{{ tag }} .
 
 # build the github-auth token-minter sidecar image
-containerize-github-auth image="agentrunner":
-    docker build -f images/github-auth/Dockerfile -t {{ image }}-github-auth images/github-auth
+containerize-github-auth tag="latest":
+    docker build -f images/github-auth/Dockerfile \
+        -t {{ image_repository }}/{{ image_name_prefix }}-github-auth:{{ tag }} \
+        images/github-auth
 
 # build the Kubernetes controller image
-containerize-controller image="agentrunner":
-    docker build -f images/controller/Dockerfile -t {{ image }}-controller .
+containerize-controller tag="latest":
+    docker build -f images/controller/Dockerfile \
+        -t {{ image_repository }}/{{ image_name_prefix }}-controller:{{ tag }} .

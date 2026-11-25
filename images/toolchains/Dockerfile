@@ -79,7 +79,7 @@ RUN mkdir -p /usr/local/lib/gh \
     && mv "/tmp/gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh" /usr/local/lib/gh/gh \
     && rm -rf /tmp/gh_*
 
-COPY --chmod=755 images/gh-shim.sh /usr/local/bin/gh
+COPY --chmod=755 images/toolchains/gh-shim.sh /usr/local/bin/gh
 
 RUN npm install -g "@earendil-works/pi-coding-agent@${PI_VERSION}" \
     && npm cache clean --force
