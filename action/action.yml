@@ -1,0 +1,52 @@
+name: Agentic Review
+description: Run a headless read-only agentic review via the local agent sidecar.
+inputs:
+  instructions:
+    description: What the agent should review or check
+    required: true
+  fail-on:
+    description: Fail the step on severity (none | warning | error)
+    default: error
+  output:
+    description: Output target (pr-review | comment | stdout)
+    default: pr-review
+  endpoint:
+    description: Local agentrunnerd HTTP endpoint
+    default: http://127.0.0.1:8788/review
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        AGENT_INSTRUCTIONS: ${{ inputs.instructions }}
+        AGENT_FAIL_ON: ${{ inputs.fail-on }}
+        AGENT_OUTPUT: ${{ inputs.output }}
+        AGENT_ENDPOINT: ${{ inputs.endpoint }}
+      run: |
+        set -euo pipefail
+        tmp_out="$(mktemp)"
+        trap 'rm -f "$tmp_out"' EXIT
+
+        jq -n \
+          --arg workspace "$GITHUB_WORKSPACE" \
+          --arg eventPath "$GITHUB_EVENT_PATH" \
+          --arg instructions "$AGENT_INSTRUCTIONS" \
+          --arg failOn "$AGENT_FAIL_ON" \
+          --arg output "$AGENT_OUTPUT" \
+          --arg repo "$GITHUB_REPOSITORY" \
+          --arg runId "$GITHUB_RUN_ID" \
+          '{workspace:$workspace, eventPath:$eventPath, instructions:$instructions, failOn:$failOn, output:$output, repo:$repo, runId:$runId}' \
+        | curl --fail-with-body -sSN -X POST \
+            -H 'Content-Type: application/json' \
+            --data-binary @- \
+            "$AGENT_ENDPOINT" \
+        | tee "$tmp_out"
+
+        result_line="$(grep '^AGENTRUNNER_RESULT=' "$tmp_out" | tail -n1 || true)"
+        if [ -z "$result_line" ]; then
+          echo "::error::agentrunnerd did not emit AGENTRUNNER_RESULT"
+          exit 1
+        fi
+
+        exit_code="$(printf '%s' "${result_line#AGENTRUNNER_RESULT=}" | jq -r '.exitCode // 1')"
+        exit "$exit_code"

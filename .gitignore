@@ -1,0 +1,27 @@
+# Go build outputs, test binaries, and coverage
+/bin/
+/dist/
+/agentrunnerd
+/agentrunner-render
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+
+# Local secrets, environment, and kubeconfig
+.env
+.env.*
+*.pem
+*.key
+kubeconfig*
+
+# OS and editor artifacts
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

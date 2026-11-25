@@ -1,0 +1,29 @@
+apiVersion: agentic.example.io/v1alpha1
+kind: AgenticRunnerDeployment
+metadata:
+  name: go-reviewer
+  namespace: actions-runners
+spec:
+  runner:
+    githubConfigUrl: https://github.com/my-org/my-repo
+    githubConfigSecret: arc-github-auth
+    runnerScaleSetName: agentic-go-review
+    minRunners: 0
+    maxRunners: 5
+  toolchainRef:
+    name: go-1.23
+  agent:
+    harness: pi
+    model: claude-sonnet-4-5
+    gateway:
+      endpoint: https://agent-gateway.internal/v1
+      authSecretRef:
+        name: agent-gateway-token
+    limits:
+      maxTurns: 25
+      maxDuration: 10m
+      maxCostUsd: 2.00
+    systemPromptRef:
+      configMapName: org-review-policy
+    githubAppSecretRef:
+      name: review-bot-app-key

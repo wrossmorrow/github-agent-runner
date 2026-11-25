@@ -1,0 +1,109 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agenticrunnerdeployments.agentic.example.io
+spec:
+  group: agentic.example.io
+  names:
+    kind: AgenticRunnerDeployment
+    listKind: AgenticRunnerDeploymentList
+    plural: agenticrunnerdeployments
+    singular: agenticrunnerdeployment
+    shortNames:
+      - ard
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [runner, toolchainRef, agent]
+              properties:
+                runner:
+                  type: object
+                  required: [githubConfigUrl, runnerScaleSetName]
+                  properties:
+                    githubConfigUrl:
+                      type: string
+                    githubConfigSecret:
+                      type: string
+                    runnerScaleSetName:
+                      type: string
+                    minRunners:
+                      type: integer
+                      minimum: 0
+                    maxRunners:
+                      type: integer
+                      minimum: 0
+                    runnerImage:
+                      type: string
+                toolchainRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                agent:
+                  type: object
+                  required: [model, gateway]
+                  properties:
+                    harness:
+                      type: string
+                      enum: [pi]
+                    model:
+                      type: string
+                    provider:
+                      type: string
+                    gateway:
+                      type: object
+                      required: [endpoint]
+                      properties:
+                        endpoint:
+                          type: string
+                        authSecretRef:
+                          type: object
+                          required: [name]
+                          properties:
+                            name:
+                              type: string
+                            key:
+                              type: string
+                    limits:
+                      type: object
+                      properties:
+                        maxTurns:
+                          type: integer
+                          minimum: 0
+                        maxDuration:
+                          type: string
+                        maxCostUsd:
+                          type: number
+                          minimum: 0
+                    systemPromptRef:
+                      type: object
+                      required: [configMapName]
+                      properties:
+                        configMapName:
+                          type: string
+                        key:
+                          type: string
+                    agentsMd:
+                      type: string
+                    githubAppSecretRef:
+                      type: object
+                      required: [name]
+                      properties:
+                        name:
+                          type: string
+                        key:
+                          type: string
+                    githubAppId:
+                      type: string
+                    githubAppInstallationId:
+                      type: string
