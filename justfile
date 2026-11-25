@@ -58,3 +58,8 @@ containerize-github-auth tag="latest":
 containerize-controller tag="latest":
     docker build -f images/controller/Dockerfile \
         -t {{ image_repository }}/{{ image_name_prefix }}-controller:{{ tag }} .
+
+# copy canonical CRDs into the Helm chart crds/ directory
+sync-chart-crds:
+    cp config/crd/agenticrunnerdeployments.yaml charts/agentrunner-controller/crds/agenticrunnerdeployments.yaml
+    cp config/crd/agenticrunnertoolchains.yaml charts/agentrunner-controller/crds/agenticrunnertoolchains.yaml

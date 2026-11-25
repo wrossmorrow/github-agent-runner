@@ -16,7 +16,7 @@ Skeleton implementation of CRD-composed agentic self-hosted GitHub Actions runne
 - `cmd/agentrunnerd/`: HTTP/streaming daemon running inside the `agent` native sidecar (`POST /review`, `GET /healthz`).
 - `cmd/agentrunner-render/`: CLI to render manifests (`--example` or JSON files).
 - `action/action.yml`: Thin composite GitHub Action (`curl` + `jq`) for stock ARC runner containers.
-- `config/crd/`, `config/controller/` & `examples/`: Kubernetes CRD manifests, controller RBAC/Deployment, and sample YAML definitions.
+- `config/crd/`, `config/controller/`, `charts/agentrunner-controller/` & `examples/`: Kubernetes CRD manifests, Helm chart, controller RBAC/Deployment, and sample YAML definitions.
 
 ## Quick Verification
 

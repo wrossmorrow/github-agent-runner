@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -55,12 +56,27 @@ jobs:
         run: |
           python3 -c '
           import glob, sys, yaml
-          paths = sorted(glob.glob(".github/workflows/*.yml") + glob.glob("action/*.yml") + glob.glob("config/crd/*.yaml") + glob.glob("examples/*.yaml") + glob.glob("examples/*.yml"))
+          paths = sorted(
+              glob.glob(".github/workflows/*.yml")
+              + glob.glob("action/*.yml")
+              + glob.glob("config/crd/*.yaml")
+              + glob.glob("config/controller/*.yaml")
+              + glob.glob("charts/agentrunner-controller/crds/*.yaml")
+              + glob.glob("examples/*.yaml")
+              + glob.glob("examples/*.yml")
+          )
           for p in paths:
               with open(p, "r", encoding="utf-8") as f:
                   list(yaml.safe_load_all(f))
               print(f"ok: {p}")
           '
+
+      - name: Lint and template Helm chart
+        run: |
+          helm lint charts/agentrunner-controller
+          helm template agentrunner-controller charts/agentrunner-controller > /dev/null
+          diff -u config/crd/agenticrunnerdeployments.yaml charts/agentrunner-controller/crds/agenticrunnerdeployments.yaml
+          diff -u config/crd/agenticrunnertoolchains.yaml charts/agentrunner-controller/crds/agenticrunnertoolchains.yaml
 
   action-smoke:
     name: Action smoke test

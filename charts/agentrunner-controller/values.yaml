@@ -1,0 +1,53 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/wrossmorrow/agentrunner-controller
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+rbac:
+  create: true
+
+controller:
+  # Empty means auto-detect from the ARC controller Deployment in arcControllerNamespace.
+  arcVersion: ""
+  arcControllerNamespace: arc-systems
+  arcControllerServiceAccount: arc-gha-rs-controller
+  githubAuthImage: ghcr.io/wrossmorrow/agentrunner-github-auth:latest
+  imagePullPolicy: IfNotPresent
+  leaderElect: false
+  metricsBindAddress: ":8080"
+  healthProbeBindAddress: ":8081"
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

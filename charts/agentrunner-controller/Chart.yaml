@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agentrunner-controller
+description: Kubernetes controller and CRDs for AgenticRunnerToolchain and AgenticRunnerDeployment (ARC v2)
+type: application
+version: 0.1.0
+appVersion: "latest"
