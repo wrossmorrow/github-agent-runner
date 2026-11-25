@@ -38,3 +38,7 @@ render-example:
 # print kind/name summary for the rendered Go reviewer example
 render-summary:
     go run ./cmd/agentrunner-render --example | jq -r '.[] | "\(.kind)/\(.metadata.name)"'
+
+# build a toolchain sidecar image stage (agent, python, golang, rust, java17, java21)
+containerize toolchain="agent" image="agentrunner":
+    docker build -f images/Dockerfile --target {{ toolchain }} -t {{ image }}-{{ toolchain }} .
