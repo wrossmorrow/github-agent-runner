@@ -44,7 +44,7 @@ render-summary:
 
 # build a toolchain sidecar image stage (agent, python, golang, rust, java17, java21)
 containerize toolchain="agent" tag="latest":
-    docker build -f images/Dockerfile \
+    docker build -f images/toolchains/Dockerfile \
         --target {{ toolchain }} \
         -t {{ image_repository }}/{{ image_name_prefix }}-{{ toolchain }}:{{ tag }} .
 
