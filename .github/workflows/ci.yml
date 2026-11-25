@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: extractions/setup-just@v4
+
+      - name: Run validation suite
+        run: just check
+
+      - name: Render example manifests
+        run: just render-summary
+
+  lint:
+    name: Lint workflows & YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@latest
+
+      - name: Lint GitHub Actions workflows
+        run: |
+          actionlint
+          actionlint -ignore 'label "agentic-go-review" is unknown' examples/workflow-agent-review.yml
+
+      - name: Validate YAML manifests
+        run: |
+          python3 -c '
+          import glob, sys, yaml
+          paths = sorted(glob.glob(".github/workflows/*.yml") + glob.glob("action/*.yml") + glob.glob("config/crd/*.yaml") + glob.glob("examples/*.yaml") + glob.glob("examples/*.yml"))
+          for p in paths:
+              with open(p, "r", encoding="utf-8") as f:
+                  list(yaml.safe_load_all(f))
+              print(f"ok: {p}")
+          '
+
+  action-smoke:
+    name: Action smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and start agentrunnerd with fake pi
+        run: |
+          cat <<'EOF' > /tmp/fake-pi.sh
+          #!/usr/bin/env bash
+          set -euo pipefail
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            cmd_type="$(printf '%s' "$line" | jq -r '.type // ""')"
+            cmd_id="$(printf '%s' "$line" | jq -r '.id // ""')"
+            if [ "$cmd_type" = "prompt" ]; then
+              jq -cn --arg id "$cmd_id" '{type:"response",id:$id,success:true}'
+              printf '%s\n' '{"type":"turn_start"}'
+              printf '%s\n' '{"type":"tool_execution_start","toolName":"read"}'
+              printf '%s\n' '{"type":"tool_execution_end","result":{"ok":true}}'
+              printf '%s\n' '{"type":"agent_end","messages":[{"role":"assistant","content":"{\"verdict\":\"APPROVE\",\"summary\":\"Smoke test passed\",\"comments\":[]}"}]}'
+            fi
+          done
+          EOF
+          chmod +x /tmp/fake-pi.sh
+
+          cat <<'EOF' > /tmp/agentrunner-config.json
+          {
+            "piBin": "/tmp/fake-pi.sh",
+            "piArgs": ["--mode", "rpc"],
+            "harness": "pi",
+            "model": "smoke-test",
+            "gatewayEndpoint": "http://127.0.0.1:11500/v1",
+            "limits": {
+              "maxTurns": 5,
+              "maxDuration": "30s"
+            }
+          }
+          EOF
+
+          go build -o /tmp/agentrunnerd ./cmd/agentrunnerd
+          AGENTRUNNER_CONFIG=/tmp/agentrunner-config.json \
+            /tmp/agentrunnerd > /tmp/agentrunnerd.log 2>&1 &
+          echo $! > /tmp/agentrunnerd.pid
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8788/healthz > /dev/null; then
+              exit 0
+            fi
+            sleep 0.2
+          done
+          cat /tmp/agentrunnerd.log
+          exit 1
+
+      - name: Run composite action against local agentrunnerd
+        uses: ./action
+        with:
+          instructions: Smoke test review
+          fail-on: error
+          output: stdout
+
+      - name: Stop agentrunnerd
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f /tmp/agentrunnerd.pid ]; then
+            kill "$(cat /tmp/agentrunnerd.pid)" 2>/dev/null || true
+          fi

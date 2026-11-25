@@ -164,7 +164,7 @@ jobs:
   agent-review:
     runs-on: agentic-go-review
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
