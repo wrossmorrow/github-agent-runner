@@ -16,6 +16,21 @@ spec:
     - name: v1alpha1
       served: true
       storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Toolchain
+          type: string
+          jsonPath: .spec.toolchainRef.name
+        - name: ScaleSet
+          type: string
+          jsonPath: .spec.runner.runnerScaleSetName
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
       schema:
         openAPIV3Schema:
           type: object
@@ -107,3 +122,30 @@ spec:
                       type: string
                     githubAppInstallationId:
                       type: string
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                resolvedImage:
+                  type: string
+                arcVersion:
+                  type: string
+                scaleSetName:
+                  type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string

@@ -1,3 +1,6 @@
+image_repository := "ghcr.io/wrossmorrow"
+image_name_prefix := "agentrunner"
+
 # list targets and exit
 default:
     just --list
@@ -40,9 +43,15 @@ render-summary:
     go run ./cmd/agentrunner-render --example | jq -r '.[] | "\(.kind)/\(.metadata.name)"'
 
 # build a toolchain sidecar image stage (agent, python, golang, rust, java17, java21)
-containerize toolchain="agent" image="agentrunner":
-    docker build -f images/Dockerfile --target {{ toolchain }} -t {{ image }}-{{ toolchain }} .
+containerize toolchain="agent" tag="latest":
+    docker build -f images/Dockerfile \
+        --target {{ toolchain }} \
+        -t {{ image_repository }}/{{ image_name_prefix }}-{{ toolchain }}:{{ tag }} .
 
 # build the github-auth token-minter sidecar image
 containerize-github-auth image="agentrunner":
     docker build -f images/github-auth/Dockerfile -t {{ image }}-github-auth images/github-auth
+
+# build the Kubernetes controller image
+containerize-controller image="agentrunner":
+    docker build -f images/controller/Dockerfile -t {{ image }}-controller .

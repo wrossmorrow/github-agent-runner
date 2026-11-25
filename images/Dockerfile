@@ -27,7 +27,7 @@ FROM bufbuild/buf:${BUF_VERSION} AS buf
 # Baked into the base agent image below so every derived toolchain stage ships with it.
 FROM golang:1.26-alpine AS agentrunnerd-build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY api/ ./api/
 COPY pkg/ ./pkg/
 COPY cmd/agentrunnerd/ ./cmd/agentrunnerd/
