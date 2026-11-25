@@ -2,6 +2,9 @@
 
 Skeleton implementation of CRD-composed agentic self-hosted GitHub Actions runners on **ARC v2** (`AutoscalingRunnerSet`) using **Kubernetes native sidecars** and `pi --mode rpc`. See [PLAN.md](PLAN.md) for the architecture sketch and [docs/KIND_TESTING.md](docs/KIND_TESTING.md) for a local `kind` testing walkthrough.
 
+* ARC v2: https://github.com/actions/actions-runner-controller
+* pi harness: https://pi.dev/
+
 ## Layout
 
 - `api/v1alpha1/`: `AgenticRunnerToolchain` and `AgenticRunnerDeployment` CRD types and validation.
@@ -21,3 +24,7 @@ Skeleton implementation of CRD-composed agentic self-hosted GitHub Actions runne
 go test -race ./...
 go run ./cmd/agentrunner-render --example | jq -r '.[] | "\(.kind)/\(.metadata.name)"'
 ```
+
+---
+
+Built with Antigravity (Google DeepMind) using Gemini 4 Neon.
