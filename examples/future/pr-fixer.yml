@@ -1,0 +1,66 @@
+# =============================================================================
+# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+#
+# TIER & PURPOSE:
+#   Tier 3 (Mutating / Branch-Writing) — Comment-Triggered PR Fixer.
+#   Triggered when a maintainer comments `/fix` or `@agentrunner fix` on a PR.
+#   Checks out the PR branch, applies fixes (missing tests, lint/review fixes),
+#   runs validation (`just check`), and pushes a commit back to the PR branch.
+#
+# REQUIRED GITHUB APP PERMISSIONS (author-bot — SEPARATE from review-bot!):
+#   - Contents: Read & write
+#   - Pull requests: Read & write
+#   - Plus repository branch protection forbidding direct pushes to `main`.
+#
+# MISSING IN AGENTRUNNER TODAY:
+#   - `mode: write-branch` / `output: branch-commit` in CRDs, agentrunnerd, and action/.
+#   - UID / write-permission alignment on shared `/home/runner/_work` (currently
+#     optimized for read-only inspection by UID 1000 vs ARC UID 1001).
+#   - Hard git safety checks in agentrunnerd (refuse default branch pushes and
+#     refuse commits touching `.github/workflows/`).
+#   - PR/branch-scoped localhost capability proxy in `github-auth` (so prompt-
+#     injected code cannot reuse `/tokens/token` to push to other branches).
+#   - Gateway per-repo/per-PR rate limits & spend caps.
+# =============================================================================
+
+name: Comment-Triggered PR Fixer (Future)
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: pr-fixer-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  fix-pr:
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      startsWith(github.event.comment.body, '/fix')
+    runs-on: agentic-go-author
+    steps:
+      - name: Resolve PR head branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          meta="$(gh pr view ${{ github.event.issue.number }} --json headRefName,headRepositoryOwner)"
+          echo "branch=$(printf '%s' "$meta" | jq -r '.headRefName')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.pr.outputs.branch }}
+          fetch-depth: 0
+
+      - uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          instructions: |
+            Address the request in PR #${{ github.event.issue.number }}:
+            "${{ github.event.comment.body }}"
+            Make minimal changes on branch ${{ steps.pr.outputs.branch }}, run `just check`
+            (or `go test -race ./...`), and commit/push if all checks pass.
+            Never modify `.github/workflows/` or push to `main`.
+          fail-on: error
+          output: branch-commit

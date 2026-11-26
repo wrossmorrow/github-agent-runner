@@ -1,0 +1,111 @@
+# =============================================================================
+# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+#
+# TIER & PURPOSE:
+#   North-Star Sketch — Autonomous Loop (Create -> Review -> Fix -> Approve).
+#   Demonstrates composing distinct `AgenticRunnerDeployment`s and separate
+#   GitHub Apps so no single agent holds both `Contents: Write` and unchecked
+#   self-approval:
+#     1. `author` job (`agentic-go-author` / `author-bot`, Contents: Write)
+#        implements an issue on `agent/auto-<n>` and opens a PR.
+#     2. Standard CI + `review` job (`agentic-go-review` / `review-bot`, Read-only)
+#        run on the PR; `review` outputs structured verdict (`APPROVE` | `REQUEST_CHANGES`).
+#     3. `fix` job (`agentic-go-author` / `author-bot`) runs ONLY if review
+#        requested changes AND `iteration < max_iterations`, pushing a fix commit
+#        and re-triggering CI + review.
+#     4. Final merge remains gated on branch protection / human or merge queue.
+#
+# REQUIRED GITHUB APP PERMISSIONS:
+#   - `author-bot`: Contents R/W, Pull requests R/W, Issues R
+#   - `review-bot`: Contents R,   Pull requests R/W  (cannot modify code or workflows)
+#
+# MISSING IN AGENTRUNNER TODAY:
+#   - All Tier 3 mutating features from `pr-fixer.yml` (`output: branch-commit`,
+#     `output: open-pr`, capability proxy in `github-auth`, UID write alignment).
+#   - Structured `$GITHUB_OUTPUT` (`verdict`, `pr-number`, `iteration`) emitted
+#     by `action/action.yml` (currently only parses `exitCode` in bash).
+#   - CRD/controller rate-limit & loop-budget fields (`maxIterationsPerPR`) +
+#     Model Gateway per-PR/per-hour rate limits and USD spend circuit breakers.
+# =============================================================================
+
+name: Autonomous Loop (Future)
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to implement autonomously
+        required: true
+      max_iterations:
+        description: Maximum review/fix cycles before stopping for human review
+        default: '3'
+
+concurrency:
+  group: auto-${{ inputs.issue_number }}
+  cancel-in-progress: true
+
+jobs:
+  author:
+    name: Implement & open PR
+    runs-on: agentic-go-author
+    outputs:
+      pr_number: ${{ steps.run.outputs.pr_number }}
+      branch: ${{ steps.run.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: run
+        uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          instructions: |
+            Read issue #${{ inputs.issue_number }}, create branch `agent/auto-${{ inputs.issue_number }}`,
+            implement the change with unit tests, verify `just check` passes, and open a PR.
+          fail-on: error
+          output: open-pr
+
+  # Note: In production GitHub Actions, steps 2 & 3 below typically live in the
+  # PR-triggered workflow (with an `agent-iter:<k>` label or commit-count guard)
+  # so standard CI checks run identically on every commit. Shown together here
+  # to illustrate the two-runner / two-App separation of powers.
+  review-and-fix-gate:
+    name: Independent review (read-only App)
+    needs: author
+    runs-on: agentic-go-review
+    outputs:
+      verdict: ${{ steps.review.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.author.outputs.branch }}
+          fetch-depth: 0
+
+      - id: review
+        uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          instructions: |
+            Independently review PR #${{ needs.author.outputs.pr_number }} against `main`.
+            Verify correctness, test coverage, and that no CI/workflow files were altered.
+          fail-on: none
+          output: pr-review
+
+  fix-if-requested:
+    name: Address review feedback (bounded)
+    needs: [author, review-and-fix-gate]
+    if: ${{ needs.review-and-fix-gate.outputs.verdict == 'REQUEST_CHANGES' }}
+    runs-on: agentic-go-author
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.author.outputs.branch }}
+          fetch-depth: 0
+
+      - uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          instructions: |
+            Read the latest review comments on PR #${{ needs.author.outputs.pr_number }},
+            fix all [ERROR] and [WARNING] findings (max cycle budget: ${{ inputs.max_iterations }}),
+            re-run `just check`, and push to `${{ needs.author.outputs.branch }}`.
+          fail-on: error
+          output: branch-commit

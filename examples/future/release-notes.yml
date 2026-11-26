@@ -1,0 +1,46 @@
+# =============================================================================
+# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+#
+# TIER & PURPOSE:
+#   Tier 1 (Read-Only Code) — Release Notes Drafter.
+#   Triggered when a semver tag is pushed; inspects actual diffs and merged
+#   PRs since the previous tag and writes a categorized draft GitHub Release
+#   with breaking-change and upgrade notes.
+#
+# REQUIRED GITHUB APP PERMISSIONS (release-bot):
+#   - Contents: Read & write   (needed by GitHub Releases API to create drafts;
+#                               protect branches so main/tags cannot be rewritten)
+#   - Pull requests: Read-only
+#
+# MISSING IN AGENTRUNNER TODAY:
+#   - `output: release-draft` poster in pkg/review/poster.go (`gh release create --draft`).
+#   - Tag-range context resolution (finding previous tag via `git describe --tags`
+#     instead of PR base/head refs).
+#   - Non-JSON / Markdown release-notes output mode in agentrunnerd.
+# =============================================================================
+
+name: Draft Release Notes (Future)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  draft-release:
+    runs-on: agentic-go-review
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          instructions: |
+            Identify the previous release tag before ${{ github.ref_name }}, inspect the commit
+            history and actual code diff since that tag, and draft release notes grouped into:
+            Breaking Changes, Features, Bug Fixes, and Tooling/CI. Verify every referenced flag
+            or CRD field against the actual code at ${{ github.ref_name }}.
+          fail-on: none
+          output: release-draft

@@ -1,0 +1,42 @@
+# =============================================================================
+# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+#
+# TIER & PURPOSE:
+#   Tier 1 (Read-Only) — Scheduled Policy / CVE Reachability Audit.
+#   Runs on a weekly schedule against `main` to check whether newly disclosed
+#   vulnerabilities (e.g., via govulncheck) are actually reachable in this repo
+#   and posts findings to a job summary or tracking issue.
+#
+# REQUIRED GITHUB APP PERMISSIONS (audit-bot):
+#   - Contents: Read-only
+#   - Issues: Read & write   (if opening/updating an audit tracking issue)
+#
+# MISSING IN AGENTRUNNER TODAY:
+#   - Scheduled / non-PR `output: summary` or `output: issue-upsert` mode.
+#   - Rich `$GITHUB_STEP_SUMMARY` Markdown rendering and `$GITHUB_OUTPUT`
+#     emission (likely via a zero-dep Node action replacing bash curl+jq).
+#   - Per-deployment egress allowlist additions for vuln DB hosts (e.g.
+#     vuln.go.dev) without bloating the shared AgenticRunnerToolchain.
+# =============================================================================
+
+name: Weekly CVE Reachability Audit (Future)
+
+on:
+  schedule:
+    - cron: '0 14 * * 1'
+  workflow_dispatch:
+
+jobs:
+  vuln-audit:
+    runs-on: agentic-go-review
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          instructions: |
+            Inspect go.mod, run static/reachability checks available in the toolchain,
+            and evaluate any critical/high dependency CVEs for actual call-path reachability
+            in this repository. Ignore test-only dependencies unless exposed in shipped binaries.
+          fail-on: error
+          output: stdout

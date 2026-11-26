@@ -1,0 +1,110 @@
+# =============================================================================
+# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+#
+# TIER & PURPOSE:
+#   Tier 1 (Read-Only) + Tier 3 (Mutating Revert PR) — Deployment Verification & Rollback.
+#   1) `verify-deployment` (Tier 1, App: deploy-verify-bot): triggered when a
+#      deployment finishes (`deployment_status.state == 'success'`); runs smoke
+#      checks against the target environment URL, inspects read-only Kubernetes
+#      pod restarts / events / error logs / metrics, correlates anomalies with
+#      the deployed commit diff, and records a deployment status verdict.
+#   2) `open-revert-pr` (Tier 3, App: rollback-bot): when verification fails,
+#      creates a `bot/revert-<sha>` branch via `git revert --no-edit`, verifies
+#      the revert builds/passes unit checks, and opens a revert PR populated
+#      with the failing smoke output and logs (never force-pushes `main` and
+#      never holds cluster-admin credentials).
+#
+# REQUIRED GITHUB APP PERMISSIONS:
+#   deploy-verify-bot (Tier 1):
+#     - Contents: Read-only
+#     - Pull requests: Read-only
+#     - Issues: Read & write         (optional: file incident issue on failure)
+#     - Deployments: Read & write    (required to post verification status)
+#   rollback-bot (Tier 3):
+#     - Contents: Read & write
+#     - Pull requests: Read & write
+#     - Issues: Read-only
+#     - Actions: Read & write        (optional: dispatch deterministic rollback.yml)
+#     - Deployments: Read-only
+#
+# MISSING IN AGENTRUNNER TODAY:
+#   - `spec.runner.serviceAccountName` / Workload Identity support on
+#     AgenticRunnerDeployment for narrowly scoped read-only cluster/metrics access.
+#   - Per-deployment egress allowlist additions for staging/observability URLs.
+#   - `deployment_status` event hydration in agentrunnerd (environment,
+#     environment_url, target SHA, and previous successful deployment SHA).
+#   - Structured `verdict` / `summary` outputs from action/action.yml and
+#     publishers for `deployment-status` and `revert-pr`.
+#   - Cooldown / oscillation lock to prevent deploy -> fail -> revert loops.
+# =============================================================================
+
+name: Deployment Verification & Revert PR (Future)
+
+on:
+  deployment_status:
+
+concurrency:
+  group: deploy-verify-${{ github.event.deployment.environment }}
+  cancel-in-progress: false
+
+jobs:
+  verify-deployment:
+    if: ${{ github.event.deployment_status.state == 'success' }}
+    runs-on: agentic-deploy-verify
+    outputs:
+      verdict: ${{ steps.verify.outputs.verdict }}
+      summary: ${{ steps.verify.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.deployment.sha }}
+          fetch-depth: 0
+
+      - id: verify
+        continue-on-error: true
+        uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          # Proposed future inputs: mode=deploy-verify, output=deployment-status
+          instructions: |
+            Deployment to environment `${{ github.event.deployment.environment }}`
+            finished for commit `${{ github.event.deployment.sha }}`.
+            Target URL: `${{ github.event.deployment_status.environment_url }}`
+
+            1. Run HTTP / health smoke checks against the target URL (verify
+               readiness, key endpoints, and expected version/SHA header).
+            2. Inspect read-only cluster telemetry (pod restarts, CrashLoopBackOff,
+               Warning events, recent error logs, and 5xx rate changes).
+            3. If regressions appear, correlate them against the deployed commit
+               diff and return a FAIL verdict with concrete evidence.
+          fail-on: request-changes
+          output: deployment-status
+
+  open-revert-pr:
+    needs: verify-deployment
+    if: ${{ needs.verify-deployment.outputs.verdict == 'FAIL' }}
+    runs-on: agentic-rollback-bot
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.deployment.sha }}
+          fetch-depth: 0
+
+      - uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          # Proposed future inputs: mode=revert-pr, protected-branches=main,cooldown=30m
+          # For lower-risk environments (e.g. `staging`), a deterministic rollback
+          # workflow (`gh workflow run rollback.yml`) can also be dispatched instead
+          # of granting the runner pod cluster write credentials.
+          instructions: |
+            Deployment verification failed for `${{ github.event.deployment.sha }}`
+            in `${{ github.event.deployment.environment }}`.
+
+            Verifier summary:
+            ${{ needs.verify-deployment.outputs.summary }}
+
+            Create a `bot/revert-${{ github.event.deployment.sha }}` branch from `main`,
+            run `git revert --no-edit ${{ github.event.deployment.sha }}`, verify the
+            revert passes local build/unit tests, and open a revert PR containing
+            the verifier findings and suspected regression diff.
+          fail-on: none
+          output: revert-pr

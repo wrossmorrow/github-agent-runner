@@ -1,0 +1,47 @@
+# =============================================================================
+# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+#
+# TIER & PURPOSE:
+#   Tier 2 (Suggest-Only, Still Contents: Read) — Suggestion-Block Reviewer.
+#   Runs linters/tests locally to verify small fixes (missing doc comments,
+#   lint cleanups, simple unit-test stubs) and emits native GitHub
+#   ```suggestion``` blocks in inline PR comments so humans can click "Commit
+#   suggestion" without giving the runner write access.
+#
+# REQUIRED GITHUB APP PERMISSIONS (review-bot — same as v1!):
+#   - Contents: Read-only
+#   - Pull requests: Read & write
+#
+# MISSING IN AGENTRUNNER TODAY:
+#   - `suggestion` / `endLine` fields on `review.Comment` in pkg/review/types.go
+#     and multi-line range formatting (`start_line`, `line`, `side: RIGHT`) in
+#     pkg/review/poster.go.
+#   - Rendering ```suggestion``` fenced blocks in inline review comment bodies.
+# =============================================================================
+
+name: Agentic Suggestions (Future)
+
+on:
+  pull_request:
+
+concurrency:
+  group: agent-suggest-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  suggest-fixes:
+    runs-on: agentic-go-review
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          instructions: |
+            Review the diff against ${{ github.base_ref }}.
+            For small, locally verifiable issues (missing doc comments on exported symbols,
+            gofmt/vet issues, trivial nil checks), include exact single- or multi-line
+            replacement code as a suggestion block. Verify any proposed change compiles.
+          fail-on: warning
+          output: pr-review

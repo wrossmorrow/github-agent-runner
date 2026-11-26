@@ -1,0 +1,54 @@
+# =============================================================================
+# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+#
+# TIER & PURPOSE:
+#   Tier 1 (Read-Only) — CI Failure Triage Bot.
+#   Triggered when a CI workflow fails on a PR; downloads failed job logs,
+#   re-runs failing tests locally inside the matching toolchain container to
+#   separate real regressions from flakes, and posts a root-cause comment.
+#
+# REQUIRED GITHUB APP PERMISSIONS (triage-bot):
+#   - Contents: Read-only
+#   - Pull requests: Read & write
+#   - Actions: Read-only   (required to download failing workflow logs)
+#   - Checks: Read-only
+#
+# MISSING IN AGENTRUNNER TODAY:
+#   - Generalized `POST /run` endpoint in agentrunnerd (current daemon only
+#     implements POST /review for pull_request events).
+#   - `workflow_run` event context hydration in pkg/review (resolving PR number,
+#     head SHA, and failed job log URLs from workflow_run payloads).
+#   - `github-auth` token scopes for `Actions: Read-only`.
+# =============================================================================
+
+name: CI Failure Triage (Future)
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+concurrency:
+  group: ci-triage-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  triage-failure:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request' }}
+    runs-on: agentic-go-triage
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          # Proposed future inputs: mode=triage, fail-on=none (advisory only)
+          instructions: |
+            Workflow run ${{ github.event.workflow_run.id }} failed on ${{ github.event.workflow_run.head_sha }}.
+            Inspect the failing job logs via `gh run view ${{ github.event.workflow_run.id }} --log-failed`,
+            reproduce the failure locally in the workspace, determine whether it is a regression
+            introduced by this PR or a flake/infra issue, and post a concise root-cause summary.
+          fail-on: none
+          output: comment

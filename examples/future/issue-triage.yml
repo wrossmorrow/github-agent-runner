@@ -1,0 +1,49 @@
+# =============================================================================
+# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+#
+# TIER & PURPOSE:
+#   Tier 1 (Read-Only) — Issue Triage & Minimal Reproducer Bot.
+#   Triggered when a new issue is opened (or labeled `needs-repro`); searches
+#   the codebase, attempts a minimal local reproduction test in the sandboxed
+#   toolchain container, and comments with affected files & repro status.
+#
+# REQUIRED GITHUB APP PERMISSIONS (issue-bot):
+#   - Contents: Read-only
+#   - Issues: Read & write
+#
+# MISSING IN AGENTRUNNER TODAY:
+#   - `output: issue-comment` poster in pkg/review/poster.go (currently only
+#     supports PR reviews and PR comments).
+#   - `issues` event payload extraction (issue number, title, body, labels)
+#     and structured issue-triage JSON output schema.
+#   - Optional label-application support via `github-auth` / `gh issue edit`.
+# =============================================================================
+
+name: Issue Triage & Repro (Future)
+
+on:
+  issues:
+    types: [opened, labeled]
+
+concurrency:
+  group: issue-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage-issue:
+    if: ${{ github.event.action == 'opened' || github.event.label.name == 'needs-repro' }}
+    runs-on: agentic-go-triage
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: wrossmorrow/github-agent-runner/action@vx.y.z
+        with:
+          instructions: |
+            Investigate issue #${{ github.event.issue.number }}: "${{ github.event.issue.title }}".
+            Search the repository for relevant code paths, write a temporary test or reproduction
+            script in /tmp (do not commit changes), run it, and report:
+            1. Whether the issue reproduced.
+            2. Suspected files and symbols.
+            3. Suggested triage labels (e.g., bug, area/*, needs-info).
+          fail-on: none
+          output: issue-comment
