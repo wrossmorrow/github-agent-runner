@@ -2,8 +2,10 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -188,5 +190,73 @@ func TestDeploymentsForToolchainFanOut(t *testing.T) {
 	reqs := r.deploymentsForToolchain(context.Background(), client.Object(tc))
 	if len(reqs) != 2 {
 		t.Fatalf("expected 2 requests for go-1.23, got %d: %+v", len(reqs), reqs)
+	}
+}
+
+func TestReconcileScaleSetConflict(t *testing.T) {
+	dep1 := newUnstructuredDeployment("actions-runners", "dep1", "go-1.23")
+	dep1.SetUID("dep-uid-1")
+	dep2 := newUnstructuredDeployment("actions-runners", "dep2", "go-1.23")
+	dep2.SetUID("dep-uid-2")
+	tc := newUnstructuredToolchain("go-1.23", "agentrunner-golang:latest")
+
+	statusTarget := &unstructured.Unstructured{}
+	statusTarget.SetGroupVersionKind(DeploymentGVK)
+
+	cl := fake.NewClientBuilder().
+		WithObjects(dep1, dep2, tc).
+		WithStatusSubresource(statusTarget).
+		Build()
+
+	r := &DeploymentReconciler{Client: cl}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "actions-runners", Name: "dep1"},
+	}); err != nil {
+		t.Fatalf("Reconcile dep1 failed: %v", err)
+	}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "actions-runners", Name: "dep2"},
+	}); err != nil {
+		t.Fatalf("expected nil error on scale-set conflict, got %v", err)
+	}
+
+	gotDep2 := &unstructured.Unstructured{}
+	gotDep2.SetGroupVersionKind(DeploymentGVK)
+	if err := cl.Get(context.Background(), types.NamespacedName{Namespace: "actions-runners", Name: "dep2"}, gotDep2); err != nil {
+		t.Fatal(err)
+	}
+	conds, _, _ := unstructured.NestedSlice(gotDep2.Object, "status", "conditions")
+	if len(conds) != 1 {
+		t.Fatalf("expected 1 condition on dep2, got %#v", gotDep2.Object["status"])
+	}
+	cond := conds[0].(map[string]any)
+	if cond["status"] != "False" || cond["reason"] != "ScaleSetNameConflict" {
+		t.Fatalf("expected Ready=False / ScaleSetNameConflict, got %#v", cond)
+	}
+	msg, _ := cond["message"].(string)
+	if !strings.Contains(msg, "AutoscalingRunnerSet/agentic-go-review") || !strings.Contains(msg, "dep1") {
+		t.Fatalf("expected conflict message mentioning AutoscalingRunnerSet/agentic-go-review and dep1, got %q", msg)
+	}
+
+	ars := &unstructured.Unstructured{}
+	ars.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "actions.github.com",
+		Version: "v1alpha1",
+		Kind:    "AutoscalingRunnerSet",
+	})
+	if err := cl.Get(context.Background(), types.NamespacedName{Namespace: "actions-runners", Name: "agentic-go-review"}, ars); err != nil {
+		t.Fatal(err)
+	}
+	if refs := ars.GetOwnerReferences(); len(refs) != 1 || refs[0].UID != "dep-uid-1" {
+		t.Fatalf("expected AutoscalingRunnerSet to remain owned by dep1 (dep-uid-1), got %#v", refs)
+	}
+
+	cm := &unstructured.Unstructured{}
+	cm.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"})
+	err := cl.Get(context.Background(), types.NamespacedName{Namespace: "actions-runners", Name: "dep2-agent-config"}, cm)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected dep2-agent-config not to be created on conflict, got err=%v", err)
 	}
 }

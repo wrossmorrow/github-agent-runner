@@ -97,6 +97,14 @@ func TestDeploymentValidate(t *testing.T) {
 		}
 	}
 
+	zeroRetries := 0
+	withZeroRetries := validDeployment()
+	withZeroRetries.Spec.Agent.Limits.MaxTransportRetries = &zeroRetries
+	if err := withZeroRetries.Validate(); err != nil {
+		t.Fatalf("expected maxTransportRetries=0 to be valid, got %v", err)
+	}
+
+	negRetries := -1
 	cases := []struct {
 		name    string
 		mutate  func(*AgenticRunnerDeployment)
@@ -194,6 +202,11 @@ func TestDeploymentValidate(t *testing.T) {
 			name:    "invalid serviceAccountName",
 			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Runner.ServiceAccountName = "ns/sa" },
 			wantErr: "serviceAccountName",
+		},
+		{
+			name:    "negative maxTransportRetries",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Agent.Limits.MaxTransportRetries = &negRetries },
+			wantErr: "maxTransportRetries",
 		},
 	}
 

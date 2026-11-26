@@ -1,12 +1,17 @@
 on: [pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   agent-review:
     runs-on: agentic-go-review
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: my-org/agent-review@v1
         with:

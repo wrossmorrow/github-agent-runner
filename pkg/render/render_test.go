@@ -40,9 +40,10 @@ func sampleInputs() (*v1alpha1.AgenticRunnerDeployment, *v1alpha1.AgenticRunnerT
 					AuthSecretRef: &v1alpha1.SecretRef{Name: "gateway-secret", Key: "api-key"},
 				},
 				Limits: v1alpha1.LimitsSpec{
-					MaxTurns:    25,
-					MaxDuration: "10m",
-					MaxCostUSD:  2.0,
+					MaxTurns:            25,
+					MaxDuration:         "10m",
+					MaxCostUSD:          2.0,
+					MaxTransportRetries: intPtr(3),
 				},
 				SystemPromptRef:    &v1alpha1.ConfigMapKeyRef{ConfigMapName: "org-review-policy"},
 				AgentsMD:           "Deployment override guidance.",
@@ -84,6 +85,9 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 	}
 	if rtCfg.Model != "claude-sonnet-4-5" || rtCfg.GatewayEndpoint != "https://agent-gateway.internal:8443/v1" || rtCfg.Mode != v1alpha1.AgentModeReadOnly {
 		t.Fatalf("unexpected runtime config: %+v", rtCfg)
+	}
+	if rtCfg.Limits.MaxTransportRetries == nil || *rtCfg.Limits.MaxTransportRetries != 3 {
+		t.Fatalf("expected Limits.MaxTransportRetries=3 in config.json, got %+v", rtCfg.Limits.MaxTransportRetries)
 	}
 	if !strings.Contains(agentData["15-toolchain-crd.md"], "go test -race") {
 		t.Fatalf("missing toolchain agentsMd fragment: %q", agentData["15-toolchain-crd.md"])
@@ -151,14 +155,21 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 	if agent["image"] != tc.Spec.Image {
 		t.Fatalf("agent image = %v, want %v", agent["image"], tc.Spec.Image)
 	}
-	var agentMode string
+	agentEnv := map[string]string{}
 	for _, e := range agent["env"].([]K8sObject) {
-		if e["name"] == "AGENTRUNNER_MODE" {
-			agentMode, _ = e["value"].(string)
+		if v, ok := e["value"].(string); ok {
+			agentEnv[e["name"].(string)] = v
 		}
 	}
-	if agentMode != v1alpha1.AgentModeReadOnly {
-		t.Fatalf("AGENTRUNNER_MODE = %q, want %q", agentMode, v1alpha1.AgentModeReadOnly)
+	if agentEnv["AGENTRUNNER_MODE"] != v1alpha1.AgentModeReadOnly {
+		t.Fatalf("AGENTRUNNER_MODE = %q, want %q", agentEnv["AGENTRUNNER_MODE"], v1alpha1.AgentModeReadOnly)
+	}
+	wantNoProxy := "localhost,127.0.0.1,::1,agent-gateway.internal"
+	if agentEnv["NO_PROXY"] != wantNoProxy || agentEnv["no_proxy"] != wantNoProxy {
+		t.Fatalf("expected NO_PROXY/no_proxy=%q, got NO_PROXY=%q no_proxy=%q", wantNoProxy, agentEnv["NO_PROXY"], agentEnv["no_proxy"])
+	}
+	if !strings.Contains(agentEnv["JAVA_TOOL_OPTIONS"], "http.nonProxyHosts=localhost|127.0.0.1|agent-gateway.internal") {
+		t.Fatalf("expected JAVA_TOOL_OPTIONS to bypass gateway host, got %q", agentEnv["JAVA_TOOL_OPTIONS"])
 	}
 	agentProbe := agent["readinessProbe"].(K8sObject)
 	if agentProbe["exec"] == nil {
@@ -208,6 +219,8 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 		t.Fatalf("expected NetworkPolicy to allow 443 and 8443, got %#v", portList)
 	}
 }
+
+func intPtr(v int) *int { return &v }
 
 func TestRenderToolchainMismatch(t *testing.T) {
 	dep, tc := sampleInputs()

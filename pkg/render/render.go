@@ -308,7 +308,13 @@ func buildAutoscalingRunnerSet(
 	}
 
 	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", opts.ProxyPort)
-	noProxy := "localhost,127.0.0.1,::1"
+	noProxyHosts := []string{"localhost", "127.0.0.1", "::1"}
+	javaNonProxyHosts := []string{"localhost", "127.0.0.1"}
+	if gh := gatewayHost(dep.Spec.Agent.Gateway.Endpoint); gh != "" && gh != "localhost" && gh != "127.0.0.1" && gh != "::1" {
+		noProxyHosts = append(noProxyHosts, gh)
+		javaNonProxyHosts = append(javaNonProxyHosts, gh)
+	}
+	noProxy := strings.Join(noProxyHosts, ",")
 	agentEnv := []K8sObject{
 		{"name": "HTTP_PROXY", "value": proxyAddr},
 		{"name": "HTTPS_PROXY", "value": proxyAddr},
@@ -318,7 +324,7 @@ func buildAutoscalingRunnerSet(
 		{"name": "no_proxy", "value": noProxy},
 		{
 			"name":  "JAVA_TOOL_OPTIONS",
-			"value": fmt.Sprintf("-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=%d -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=%d -Dhttp.nonProxyHosts=localhost|127.0.0.1", opts.ProxyPort, opts.ProxyPort),
+			"value": fmt.Sprintf("-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=%d -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=%d -Dhttp.nonProxyHosts=%s", opts.ProxyPort, opts.ProxyPort, strings.Join(javaNonProxyHosts, "|")),
 		},
 		{"name": "AGENTRUNNER_ADDR", "value": fmt.Sprintf("127.0.0.1:%d", opts.AgentRunnerPort)},
 		{"name": "AGENTRUNNER_CONFIG", "value": "/etc/agentrunner/config.json"},
@@ -536,6 +542,14 @@ func resolveGitHubAppEnv(envName, inlineVal, key string, agent v1alpha1.AgentSpe
 		}, true
 	}
 	return nil, false
+}
+
+func gatewayHost(endpoint string) string {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(u.Hostname()))
 }
 
 func extractRepoName(configURL string) string {

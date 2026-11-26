@@ -107,13 +107,18 @@ Add a workflow to your target repository referencing the scale-set name (`spec.r
 ```yaml
 on: [pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   agent-review:
     runs-on: agentic-go-review
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: wrossmorrow/github-agent-runner/action@v0.0.1
         with:
@@ -169,6 +174,12 @@ just sync-chart-crds          # copy config/crd/*.yaml into charts/agentrunner-c
 - `cmd/agentrunner-controller/`, `cmd/agentrunnerd/`, `cmd/agentrunner-render/`: Controller manager, sidecar HTTP daemon, and manifest CLI.
 - `images/`: Dockerfiles for `controller`, `github-auth`, and multi-stage `toolchains`.
 - `charts/agentrunner-controller/`, `config/crd/`, `config/controller/`, `examples/`, `action/`: Helm chart (with `values.schema.json`), CRDs, examples, and composite GitHub Action.
+
+---
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
 
 ---
 

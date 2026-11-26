@@ -115,6 +115,9 @@ spec:
                         maxTokens:
                           type: integer
                           minimum: 0
+                        maxTransportRetries:
+                          type: integer
+                          minimum: 0
                     egressAllowlist:
                       type: array
                       items:
