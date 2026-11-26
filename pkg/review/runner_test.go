@@ -85,6 +85,20 @@ func TestHelperPiReview(t *testing.T) {
 			continue
 		}
 
+		if mode == "release_markdown" {
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":    "assistant",
+						"content": "# v0.1.0\n\n## Features\n- Added `release-draft`",
+					},
+				},
+			})
+			continue
+		}
+
 		if (mode == "transient_socket_then_ok" || mode == "bad_format_then_ok") && promptCount > 1 {
 			if sp, _ := cmd["systemPrompt"].(string); strings.TrimSpace(sp) == "" {
 				_ = enc.Encode(map[string]any{
@@ -434,4 +448,40 @@ func TestRunnerFormatNudge(t *testing.T) {
 			t.Fatalf("expected JSON parse error without exceeding MaxTurns=1, got %v", err)
 		}
 	})
+}
+
+func TestRunnerReleaseDraftMarkdown(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_WANT_REVIEW_HELPER", "1")
+	t.Setenv("HELPER_MODE", "release_markdown")
+
+	poster := &mockPoster{}
+	runner := &Runner{
+		Config: Config{
+			PiBin:  exe,
+			PiArgs: []string{"-test.run=TestHelperPiReview"},
+			Limits: v1alpha1.LimitsSpec{MaxTurns: 5, MaxDuration: "5s"},
+		},
+		Poster: poster,
+	}
+
+	outcome, err := runner.Run(context.Background(), Request{
+		Workspace:    t.TempDir(),
+		Instructions: "Draft release notes for v0.1.0",
+		Output:       OutputReleaseDraft,
+		Repo:         "org/repo",
+		Tag:          "v0.1.0",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run release-draft failed: %v", err)
+	}
+	if outcome.Result.Title != "v0.1.0" || !strings.Contains(outcome.Result.Body, "Added `release-draft`") {
+		t.Fatalf("unexpected release result: %+v", outcome.Result)
+	}
+	if !poster.called || poster.req.Output != OutputReleaseDraft || poster.req.Tag != "v0.1.0" {
+		t.Fatalf("expected poster called with release-draft request, got %+v", poster)
+	}
 }

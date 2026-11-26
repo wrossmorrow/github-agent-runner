@@ -107,7 +107,6 @@ func TestOutputValidationOnRun(t *testing.T) {
 		output     string
 		wantStatus int
 	}{
-		{review.OutputReleaseDraft, http.StatusNotImplemented},
 		{review.OutputDeploymentStatus, http.StatusNotImplemented},
 		{review.OutputBranchCommit, http.StatusNotImplemented},
 		{review.OutputRevertPR, http.StatusNotImplemented},

@@ -8,8 +8,11 @@ inputs:
     description: Fail the step on severity (none | warning | error)
     default: error
   output:
-    description: Output target (pr-review | comment | issue-comment | stdout)
+    description: Output target (pr-review | comment | issue-comment | release-draft | stdout)
     default: pr-review
+  tag:
+    description: Git tag name for release-draft output (defaults to GITHUB_REF_NAME on tag pushes)
+    default: ""
   endpoint:
     description: Local agentrunnerd HTTP endpoint
     default: http://127.0.0.1:8788/review
@@ -38,11 +41,17 @@ runs:
         AGENT_INSTRUCTIONS: ${{ inputs.instructions }}
         AGENT_FAIL_ON: ${{ inputs.fail-on }}
         AGENT_OUTPUT: ${{ inputs.output }}
+        AGENT_TAG: ${{ inputs.tag }}
         AGENT_ENDPOINT: ${{ inputs.endpoint }}
       run: |
         set -euo pipefail
         tmp_out="$(mktemp)"
         trap 'rm -f "$tmp_out"' EXIT
+
+        tag_val="$AGENT_TAG"
+        if [ -z "$tag_val" ] && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+          tag_val="${GITHUB_REF_NAME:-}"
+        fi
 
         jq -n \
           --arg workspace "$GITHUB_WORKSPACE" \
@@ -51,9 +60,10 @@ runs:
           --arg instructions "$AGENT_INSTRUCTIONS" \
           --arg failOn "$AGENT_FAIL_ON" \
           --arg output "$AGENT_OUTPUT" \
+          --arg tag "$tag_val" \
           --arg repo "$GITHUB_REPOSITORY" \
           --arg runId "$GITHUB_RUN_ID" \
-          '{workspace:$workspace, eventPath:$eventPath, eventName:$eventName, instructions:$instructions, failOn:$failOn, output:$output, repo:$repo, runId:$runId}' \
+          '{workspace:$workspace, eventPath:$eventPath, eventName:$eventName, instructions:$instructions, failOn:$failOn, output:$output, tag:$tag, repo:$repo, runId:$runId}' \
         | curl --fail-with-body -sSN -X POST \
             -H 'Content-Type: application/json' \
             --data-binary @- \

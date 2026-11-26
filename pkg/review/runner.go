@@ -58,6 +58,11 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	}
 
 	req = HydrateFromEvent(req)
+	if req.Output == OutputReleaseDraft && req.BaseRef == "" {
+		if prev := resolvePreviousTag(ctx, req.Workspace, req.Tag); prev != "" {
+			req.BaseRef = prev
+		}
+	}
 
 	var cancel context.CancelFunc
 	if dur, err := time.ParseDuration(r.Config.Limits.MaxDuration); err == nil && dur > 0 {
@@ -70,7 +75,11 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		return nil, err
 	}
 	if agentsMD == "" {
-		agentsMD = DefaultReviewerSystemPrompt
+		if req.Output == OutputReleaseDraft {
+			agentsMD = DefaultReleaseNotesSystemPrompt
+		} else {
+			agentsMD = DefaultReviewerSystemPrompt
+		}
 	}
 
 	diffStat := readDiffStat(ctx, req.Workspace, req.BaseRef, req.HeadSHA)
@@ -135,17 +144,22 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		return nil, err
 	}
 
-	reviewRes, err := ExtractReviewResult(finalText)
-	if err != nil && ctx.Err() == nil && (r.Config.Limits.MaxTurns <= 0 || turns < r.Config.Limits.MaxTurns) {
-		_, _ = fmt.Fprintln(logOut, "agentrunner: assistant output missing valid review JSON; nudging once in-session...")
-		nudgeText, nudgeErr := sendPromptWithTransportRetries(
-			ctx, client, events, formatNudgePrompt, formatNudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
-		)
-		if nudgeErr != nil {
-			return nil, nudgeErr
-		}
-		finalText = nudgeText
+	var reviewRes *Result
+	if req.Output == OutputReleaseDraft {
+		reviewRes, err = ExtractReleaseResult(finalText, req.Tag)
+	} else {
 		reviewRes, err = ExtractReviewResult(finalText)
+		if err != nil && ctx.Err() == nil && (r.Config.Limits.MaxTurns <= 0 || turns < r.Config.Limits.MaxTurns) {
+			_, _ = fmt.Fprintln(logOut, "agentrunner: assistant output missing valid review JSON; nudging once in-session...")
+			nudgeText, nudgeErr := sendPromptWithTransportRetries(
+				ctx, client, events, formatNudgePrompt, formatNudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
+			)
+			if nudgeErr != nil {
+				return nil, nudgeErr
+			}
+			finalText = nudgeText
+			reviewRes, err = ExtractReviewResult(finalText)
+		}
 	}
 	if err != nil {
 		preview := strings.TrimSpace(finalText)
@@ -395,6 +409,25 @@ func extractAssistantOutcome(msgAny any) (string, string) {
 	default:
 		return "", errMsg
 	}
+}
+
+func resolvePreviousTag(ctx context.Context, workspace, currentTag string) string {
+	if strings.TrimSpace(workspace) == "" {
+		return ""
+	}
+	candidates := []string{"HEAD^"}
+	if currentTag != "" {
+		candidates = []string{currentTag + "^", "HEAD^"}
+	}
+	for _, ref := range candidates {
+		cmd := exec.CommandContext(ctx, "git", "-C", workspace, "describe", "--tags", "--abbrev=0", ref)
+		if out, err := cmd.Output(); err == nil {
+			if prev := strings.TrimSpace(string(out)); prev != "" {
+				return prev
+			}
+		}
+	}
+	return ""
 }
 
 func readDiffStat(ctx context.Context, workspace, baseRef, headSHA string) string {

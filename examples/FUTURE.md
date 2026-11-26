@@ -150,12 +150,7 @@ A full autonomous PR lifecycle (trigger → create PR → run CI & review → fi
 - **Per-deployment egress additions** *(`spec.agent.egressAllowlist` implemented in CRD & renderer)*: Appends deployment-specific domains (e.g., internal artifact registries, staging URLs, or issue trackers) on top of `AgenticRunnerToolchain.spec.egressAllowlist`.
 
 ### B. `agentrunnerd` & GitHub Action (`cmd/agentrunnerd/`, `pkg/review/`, `action/`)
-- **Generalized task endpoints/modes**: Move beyond `POST /review` (`pkg/review`) to a general `POST /run` supporting multiple structured output schemas and GitHub publishers:
-  - `pr-review` (with ```` ```suggestion ```` block support)
-  - `pr-comment` / `issue-comment`
-  - `release-draft`
-  - `deployment-status`
-  - `branch-commit` (edits workspace, runs required checks, commits/pushes to a non-default PR branch)
+- **Generalized task endpoints/modes**: `POST /run` (with backwards-compatible `POST /review` alias) and multi-event hydration (`pull_request`, `issues`, `issue_comment`, `workflow_run`, `push` tags, `deployment_status`) are implemented alongside `pr-review`, `comment`, `issue-comment`, and `release-draft` publishers. Remaining planned outputs (`deployment-status`, `branch-commit`, `revert-pr`, `suggest`) return `501 Not Implemented`.
 - **Event hydration beyond `pull_request`**: Hydrate `deployment_status` payloads (resolving environment name, `environment_url`, target SHA, and previous successful deployment SHA) alongside `workflow_run` and `issues`.
 - **Git safety guardrails inside `agentrunnerd`**: Before committing/pushing in Tier 3 mode, reject dirty/unexpected target branches (never push to `main`/`master`) and reject diffs touching `.github/workflows/` or policy files.
 - **Richer Action outputs (`action/`)**: Upgrade `action/action.yml` from bash `curl` + `jq` to a small zero-dependency Node script (`index.mjs`) that writes structured `$GITHUB_OUTPUT` values (`verdict`, `summary`, `findings`, `pr-number`, `commit-sha`) and Markdown `$GITHUB_STEP_SUMMARY` tables cleanly.
