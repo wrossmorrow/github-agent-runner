@@ -15,7 +15,7 @@ inputs:
     default: ""
   endpoint:
     description: Local agentrunnerd HTTP endpoint
-    default: http://127.0.0.1:8788/review
+    default: http://127.0.0.1:8788/run
 outputs:
   verdict:
     description: Structured verdict returned by the agent (e.g. APPROVE, COMMENT, REQUEST_CHANGES)
