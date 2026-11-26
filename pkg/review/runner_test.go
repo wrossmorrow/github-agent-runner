@@ -72,6 +72,20 @@ func TestHelperPiReview(t *testing.T) {
 		}
 
 		if mode == "transient_socket_then_ok" && promptCount > 1 {
+			if sp, _ := cmd["systemPrompt"].(string); strings.TrimSpace(sp) == "" {
+				_ = enc.Encode(map[string]any{
+					"type": "agent_end",
+					"messages": []any{
+						map[string]any{
+							"role":         "assistant",
+							"stopReason":   "error",
+							"errorMessage": "missing systemPrompt on retry",
+							"content":      []any{},
+						},
+					},
+				})
+				continue
+			}
 			_ = enc.Encode(map[string]any{"type": "turn_start"})
 			_ = enc.Encode(map[string]any{
 				"type": "agent_end",
@@ -322,4 +336,27 @@ func TestRunnerTransientTransportRetry(t *testing.T) {
 	if !strings.Contains(logs.String(), "retrying in-session (1/2)") {
 		t.Fatalf("expected retry log line, got:\n%s", logs.String())
 	}
+
+	t.Run("disabled when MaxTransportRetries is zero", func(t *testing.T) {
+		zero := 0
+		noRetryRunner := &Runner{
+			Config: Config{
+				PiBin:  exe,
+				PiArgs: []string{"-test.run=TestHelperPiReview"},
+				Limits: v1alpha1.LimitsSpec{
+					MaxTurns:            5,
+					MaxDuration:         "5s",
+					MaxTransportRetries: &zero,
+				},
+			},
+			RetryBackoff: time.Millisecond,
+		}
+		_, err := noRetryRunner.Run(context.Background(), Request{
+			Workspace:    t.TempDir(),
+			Instructions: "Check everything",
+		}, nil)
+		if err == nil || !strings.Contains(err.Error(), "UND_ERR_SOCKET") {
+			t.Fatalf("expected immediate UND_ERR_SOCKET error when retries=0, got %v", err)
+		}
+	})
 }

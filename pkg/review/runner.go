@@ -23,15 +23,14 @@ const (
 
 // Config holds runtime settings loaded by agentrunnerd from /etc/agentrunner/config.json.
 type Config struct {
-	PiBin               string              `json:"piBin,omitempty"`
-	PiArgs              []string            `json:"piArgs,omitempty"`
-	Harness             string              `json:"harness"`
-	Provider            string              `json:"provider,omitempty"`
-	Model               string              `json:"model"`
-	GatewayEndpoint     string              `json:"gatewayEndpoint"`
-	Limits              v1alpha1.LimitsSpec `json:"limits,omitempty"`
-	AgentsDirs          []string            `json:"agentsDirs,omitempty"`
-	MaxTransportRetries int                 `json:"maxTransportRetries,omitempty"`
+	PiBin           string              `json:"piBin,omitempty"`
+	PiArgs          []string            `json:"piArgs,omitempty"`
+	Harness         string              `json:"harness"`
+	Provider        string              `json:"provider,omitempty"`
+	Model           string              `json:"model"`
+	GatewayEndpoint string              `json:"gatewayEndpoint"`
+	Limits          v1alpha1.LimitsSpec `json:"limits,omitempty"`
+	AgentsDirs      []string            `json:"agentsDirs,omitempty"`
 }
 
 // Runner executes a single headless review against `pi --mode rpc`.
@@ -110,10 +109,11 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	defer unsub()
 
 	maxRetries := defaultMaxTransportRetries
-	if r.Config.MaxTransportRetries > 0 {
-		maxRetries = r.Config.MaxTransportRetries
-	} else if r.Config.MaxTransportRetries < 0 {
-		maxRetries = 0
+	if r.Config.Limits.MaxTransportRetries != nil {
+		maxRetries = *r.Config.Limits.MaxTransportRetries
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
 	}
 	backoff := r.RetryBackoff
 	if backoff <= 0 {
@@ -130,8 +130,9 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		}
 		if attempt > 0 {
 			promptCmd = map[string]any{
-				"type":    "prompt",
-				"message": "The previous response was interrupted by a transient network/socket error. Continue where you left off and finish the review.",
+				"type":         "prompt",
+				"message":      "The previous response was interrupted by a transient network/socket error. Continue where you left off and finish the review.",
+				"systemPrompt": agentsMD,
 			}
 		}
 

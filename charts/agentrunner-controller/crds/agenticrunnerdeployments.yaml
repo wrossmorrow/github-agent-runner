@@ -106,6 +106,9 @@ spec:
                         maxTokens:
                           type: integer
                           minimum: 0
+                        maxTransportRetries:
+                          type: integer
+                          minimum: 0
                     systemPromptRef:
                       type: object
                       required: [configMapName]
