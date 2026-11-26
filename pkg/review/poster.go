@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -42,33 +43,50 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 		return err
 	}
 
-	body := formatReviewMarkdown(res)
-	var args []string
-	var stdin []byte
-
 	switch req.Output {
 	case "comment":
-		args = []string{"pr", "comment", strconv.Itoa(req.PRNumber), "--repo", req.Repo, "--body", body}
+		args := []string{"pr", "comment", strconv.Itoa(req.PRNumber), "--repo", req.Repo, "--body", formatReviewMarkdown(res)}
+		_, err := runGH(ctx, ghBin, token, args, nil)
+		return err
 	case "pr-review":
-		payload, err := json.Marshal(map[string]any{
-			"event":    mapEvent(res.Verdict),
-			"body":     body,
-			"comments": toGitHubComments(res.Comments),
-		})
-		if err != nil {
-			return err
-		}
-		stdin = payload
-		args = []string{
+		args := []string{
 			"api",
 			fmt.Sprintf("repos/%s/pulls/%d/reviews", req.Repo, req.PRNumber),
 			"--method", "POST",
 			"--input", "-",
 		}
+		validLines := loadPRDiffLines(ctx, req.Workspace, req.BaseRef)
+		inline, offDiff := partitionComments(res.Comments, validLines)
+		inlineGH := toGitHubComments(inline)
+
+		payload, err := json.Marshal(map[string]any{
+			"event":    mapEvent(res.Verdict),
+			"body":     formatPRReviewBody(res, inline, offDiff),
+			"comments": inlineGH,
+		})
+		if err != nil {
+			return err
+		}
+
+		out, err := runGH(ctx, ghBin, token, args, payload)
+		if err != nil && len(inlineGH) > 0 && isHTTP422(out) {
+			fallbackPayload, merr := json.Marshal(map[string]any{
+				"event":    mapEvent(res.Verdict),
+				"body":     formatReviewMarkdown(res),
+				"comments": []map[string]any{},
+			})
+			if merr != nil {
+				return merr
+			}
+			_, err = runGH(ctx, ghBin, token, args, fallbackPayload)
+		}
+		return err
 	default:
 		return fmt.Errorf("unsupported output mode %q", req.Output)
 	}
+}
 
+func runGH(ctx context.Context, ghBin, token string, args []string, stdin []byte) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, ghBin, args...)
 	if len(stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(stdin)
@@ -78,9 +96,14 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("gh %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return out, fmt.Errorf("gh %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	return out, nil
+}
+
+func isHTTP422(out []byte) bool {
+	s := strings.ToLower(string(out))
+	return strings.Contains(s, "422") || strings.Contains(s, "unprocessable")
 }
 
 func (p *GhPoster) readToken() (string, error) {
@@ -108,13 +131,143 @@ func mapEvent(verdict string) string {
 func formatReviewMarkdown(res *Result) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Verdict:** `%s`\n\n%s\n", res.Verdict, strings.TrimSpace(res.Summary))
-	if len(res.Comments) > 0 {
-		b.WriteString("\n### Findings\n")
-		for _, c := range res.Comments {
-			fmt.Fprintf(&b, "- `[%s]` `%s:%d`: %s\n", strings.ToUpper(c.Severity), c.Path, c.Line, c.Body)
+	appendCommentSection(&b, "Findings", res.Comments)
+	return b.String()
+}
+
+func formatPRReviewBody(res *Result, inline, offDiff []Comment) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Verdict:** `%s`\n\n%s\n", res.Verdict, strings.TrimSpace(res.Summary))
+	appendCommentSection(&b, "Findings", inline)
+	appendCommentSection(&b, "Notes outside the diff", offDiff)
+	return b.String()
+}
+
+func appendCommentSection(b *strings.Builder, heading string, comments []Comment) {
+	if len(comments) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n### %s\n", heading)
+	for _, c := range comments {
+		loc := "(general)"
+		if c.Path != "" && c.Line > 0 {
+			loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
+		} else if c.Path != "" {
+			loc = c.Path
+		}
+		fmt.Fprintf(b, "- `[%s]` `%s`: %s\n", strings.ToUpper(c.Severity), loc, c.Body)
+	}
+}
+
+func normalizeCommentPath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.ReplaceAll(p, "\\", "/")
+	for strings.HasPrefix(p, "./") || strings.HasPrefix(p, "/") {
+		p = strings.TrimPrefix(p, "./")
+		p = strings.TrimPrefix(p, "/")
+	}
+	if p == "" {
+		return ""
+	}
+	cleaned := path.Clean(p)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return ""
+	}
+	return cleaned
+}
+
+func loadPRDiffLines(ctx context.Context, workspace, baseRef string) map[string]map[int]struct{} {
+	if strings.TrimSpace(workspace) == "" || strings.TrimSpace(baseRef) == "" {
+		return nil
+	}
+	for _, ref := range []string{"origin/" + baseRef + "...HEAD", baseRef + "...HEAD"} {
+		cmd := exec.CommandContext(ctx, "git", "-C", workspace, "diff", "--no-color", "-U3", ref)
+		if out, err := cmd.Output(); err == nil {
+			return parseDiffLines(string(out))
 		}
 	}
-	return b.String()
+	return nil
+}
+
+func parseDiffLines(diffText string) map[string]map[int]struct{} {
+	result := map[string]map[int]struct{}{}
+	var currentFile string
+	newLine := 0
+	inHunk := false
+
+	for _, line := range strings.Split(diffText, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			currentFile = ""
+			inHunk = false
+		case !inHunk && line == "+++ /dev/null":
+			currentFile = ""
+		case !inHunk && strings.HasPrefix(line, "+++ b/"):
+			currentFile = normalizeCommentPath(strings.TrimPrefix(line, "+++ b/"))
+			if currentFile != "" && result[currentFile] == nil {
+				result[currentFile] = map[int]struct{}{}
+			}
+		case strings.HasPrefix(line, "@@ "):
+			if start, ok := parseHunkNewStart(line); ok {
+				newLine = start
+				inHunk = true
+			}
+		case inHunk && currentFile != "":
+			if line == "" {
+				continue
+			}
+			switch line[0] {
+			case ' ', '+':
+				result[currentFile][newLine] = struct{}{}
+				newLine++
+			case '-', '\\':
+			default:
+				inHunk = false
+			}
+		}
+	}
+	return result
+}
+
+func parseHunkNewStart(line string) (int, bool) {
+	idx := strings.Index(line, " +")
+	if idx < 0 {
+		return 0, false
+	}
+	rest := line[idx+2:]
+	end := strings.IndexAny(rest, ", ")
+	if end < 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+func partitionComments(comments []Comment, validLines map[string]map[int]struct{}) (inline []Comment, offDiff []Comment) {
+	for _, c := range comments {
+		norm := normalizeCommentPath(c.Path)
+		c.Path = norm
+		if norm == "" || c.Line <= 0 {
+			offDiff = append(offDiff, c)
+			continue
+		}
+		if validLines != nil {
+			lines, ok := validLines[norm]
+			if !ok {
+				offDiff = append(offDiff, c)
+				continue
+			}
+			if _, ok := lines[c.Line]; !ok {
+				offDiff = append(offDiff, c)
+				continue
+			}
+		}
+		inline = append(inline, c)
+	}
+	return inline, offDiff
 }
 
 func toGitHubComments(comments []Comment) []map[string]any {
@@ -126,6 +279,7 @@ func toGitHubComments(comments []Comment) []map[string]any {
 		out = append(out, map[string]any{
 			"path": c.Path,
 			"line": c.Line,
+			"side": "RIGHT",
 			"body": fmt.Sprintf("[%s] %s", strings.ToUpper(c.Severity), c.Body),
 		})
 	}
