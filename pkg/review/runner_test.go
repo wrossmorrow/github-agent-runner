@@ -684,3 +684,24 @@ func TestResolvePreviousTag(t *testing.T) {
 		}
 	})
 }
+
+func TestSelectDefaultSystemPrompt(t *testing.T) {
+	cases := []struct {
+		name   string
+		mode   string
+		output string
+		want   string
+	}{
+		{"default reviewer", v1alpha1.AgentModeReadOnly, OutputPRReview, DefaultReviewerSystemPrompt},
+		{"mode suggest", v1alpha1.AgentModeSuggest, OutputPRReview, DefaultSuggestSystemPrompt},
+		{"output suggest", v1alpha1.AgentModeReadOnly, OutputSuggest, DefaultSuggestSystemPrompt},
+		{"release draft takes precedence", v1alpha1.AgentModeSuggest, OutputReleaseDraft, DefaultReleaseNotesSystemPrompt},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := selectDefaultSystemPrompt(tc.mode, tc.output); got != tc.want {
+				t.Fatalf("selectDefaultSystemPrompt(%q, %q) did not match expected prompt", tc.mode, tc.output)
+			}
+		})
+	}
+}

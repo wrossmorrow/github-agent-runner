@@ -25,6 +25,10 @@ const (
 	formatNudgePrompt = `Your previous response did not contain a valid JSON review object.
 Do not run any more tools. Respond with ONLY a single valid JSON object matching:
 {"verdict":"APPROVE"|"COMMENT"|"REQUEST_CHANGES","summary":"concise summary","comments":[{"path":"relative/path","line":1,"severity":"info"|"warning"|"error","body":"comment"}]}`
+
+	formatSuggestNudgePrompt = `Your previous response did not contain a valid JSON review object.
+Do not run any more tools. Respond with ONLY a single valid JSON object matching:
+{"verdict":"APPROVE"|"COMMENT"|"REQUEST_CHANGES","summary":"concise summary","comments":[{"path":"relative/path","startLine":10,"line":12,"severity":"info"|"warning"|"error","body":"comment","suggestion":"optional replacement code"}]}`
 )
 
 // Config holds runtime settings loaded by agentrunnerd from /etc/agentrunner/config.json.
@@ -75,14 +79,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		return nil, err
 	}
 	if agentsMD == "" {
-		switch {
-		case req.Output == OutputReleaseDraft:
-			agentsMD = DefaultReleaseNotesSystemPrompt
-		case r.Config.Mode == v1alpha1.AgentModeSuggest || req.Output == OutputSuggest:
-			agentsMD = DefaultSuggestSystemPrompt
-		default:
-			agentsMD = DefaultReviewerSystemPrompt
-		}
+		agentsMD = selectDefaultSystemPrompt(r.Config.Mode, req.Output)
 	}
 
 	diffStat := readDiffStat(ctx, req.Workspace, req.BaseRef, req.HeadSHA)
@@ -153,9 +150,13 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	} else {
 		reviewRes, err = ExtractReviewResult(finalText)
 		if err != nil && ctx.Err() == nil && (r.Config.Limits.MaxTurns <= 0 || turns < r.Config.Limits.MaxTurns) {
+			nudgePrompt := formatNudgePrompt
+			if r.Config.Mode == v1alpha1.AgentModeSuggest || req.Output == OutputSuggest {
+				nudgePrompt = formatSuggestNudgePrompt
+			}
 			_, _ = fmt.Fprintln(logOut, "agentrunner: assistant output missing valid review JSON; nudging once in-session...")
 			nudgeText, nudgeErr := sendPromptWithTransportRetries(
-				ctx, client, events, formatNudgePrompt, formatNudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
+				ctx, client, events, nudgePrompt, nudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
 			)
 			if nudgeErr != nil {
 				return nil, nudgeErr
@@ -191,6 +192,17 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		ExitCode: exitCode,
 		Turns:    turns,
 	}, nil
+}
+
+func selectDefaultSystemPrompt(mode, output string) string {
+	switch {
+	case output == OutputReleaseDraft:
+		return DefaultReleaseNotesSystemPrompt
+	case mode == v1alpha1.AgentModeSuggest || output == OutputSuggest:
+		return DefaultSuggestSystemPrompt
+	default:
+		return DefaultReviewerSystemPrompt
+	}
 }
 
 func sendPromptWithTransportRetries(

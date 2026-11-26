@@ -69,8 +69,8 @@ index 1111111..0000000
 }
 
 func TestPartitionCommentsAndBodyFormatting(t *testing.T) {
-	validLines := map[string]map[int]struct{}{
-		"pkg/a.go": {12: {}},
+	validLines := map[string]map[int]int{
+		"pkg/a.go": {12: 1},
 	}
 	comments := []Comment{
 		{Path: "./pkg/a.go", Line: 12, Severity: "error", Body: "Inline normalized path"},
@@ -338,8 +338,8 @@ cat > "` + notesLog + `"
 }
 
 func TestToGitHubCommentsSuggestions(t *testing.T) {
-	validLines := map[string]map[int]struct{}{
-		"pkg/a.go": {10: {}, 11: {}, 12: {}, 20: {}},
+	validLines := map[string]map[int]int{
+		"pkg/a.go": {10: 1, 11: 1, 12: 1, 20: 2},
 	}
 	comments := []Comment{
 		{
@@ -373,11 +373,19 @@ func TestToGitHubCommentsSuggestions(t *testing.T) {
 			Body:       "Inverted start line",
 			Suggestion: "inverted()",
 		},
+		{
+			Path:       "pkg/a.go",
+			StartLine:  12, // hunk 1
+			Line:       20, // hunk 2 -> cross-hunk span rejected by GitHub API
+			Severity:   "warning",
+			Body:       "Cross-hunk span",
+			Suggestion: "crossHunk()",
+		},
 	}
 
 	inline, offDiff := partitionComments(comments, validLines)
-	if len(inline) != 2 || len(offDiff) != 2 {
-		t.Fatalf("expected 2 inline and 2 offDiff, got inline=%d offDiff=%d", len(inline), len(offDiff))
+	if len(inline) != 2 || len(offDiff) != 3 {
+		t.Fatalf("expected 2 inline and 3 offDiff, got inline=%d offDiff=%d", len(inline), len(offDiff))
 	}
 	if offDiff[0].StartLine != 5 {
 		t.Fatalf("expected off-diff multi-line suggestion preserved cleanly, got %+v", offDiff[0])

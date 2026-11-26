@@ -280,7 +280,7 @@ func normalizeCommentPath(p string) string {
 	return cleaned
 }
 
-func loadPRDiffLines(ctx context.Context, workspace, baseRef string) map[string]map[int]struct{} {
+func loadPRDiffLines(ctx context.Context, workspace, baseRef string) map[string]map[int]int {
 	if strings.TrimSpace(workspace) == "" || strings.TrimSpace(baseRef) == "" {
 		return nil
 	}
@@ -293,10 +293,11 @@ func loadPRDiffLines(ctx context.Context, workspace, baseRef string) map[string]
 	return nil
 }
 
-func parseDiffLines(diffText string) map[string]map[int]struct{} {
-	result := map[string]map[int]struct{}{}
+func parseDiffLines(diffText string) map[string]map[int]int {
+	result := map[string]map[int]int{}
 	var currentFile string
 	newLine := 0
+	hunkID := 0
 	inHunk := false
 
 	for _, line := range strings.Split(diffText, "\n") {
@@ -309,11 +310,12 @@ func parseDiffLines(diffText string) map[string]map[int]struct{} {
 		case !inHunk && strings.HasPrefix(line, "+++ b/"):
 			currentFile = normalizeCommentPath(strings.TrimPrefix(line, "+++ b/"))
 			if currentFile != "" && result[currentFile] == nil {
-				result[currentFile] = map[int]struct{}{}
+				result[currentFile] = map[int]int{}
 			}
 		case strings.HasPrefix(line, "@@ "):
 			if start, ok := parseHunkNewStart(line); ok {
 				newLine = start
+				hunkID++
 				inHunk = true
 			}
 		case inHunk && currentFile != "":
@@ -322,7 +324,7 @@ func parseDiffLines(diffText string) map[string]map[int]struct{} {
 			}
 			switch line[0] {
 			case ' ', '+':
-				result[currentFile][newLine] = struct{}{}
+				result[currentFile][newLine] = hunkID
 				newLine++
 			case '-', '\\':
 			default:
@@ -350,7 +352,7 @@ func parseHunkNewStart(line string) (int, bool) {
 	return n, true
 }
 
-func partitionComments(comments []Comment, validLines map[string]map[int]struct{}) (inline []Comment, offDiff []Comment) {
+func partitionComments(comments []Comment, validLines map[string]map[int]int) (inline []Comment, offDiff []Comment) {
 	for _, c := range comments {
 		norm := normalizeCommentPath(c.Path)
 		c.Path = norm
@@ -374,14 +376,15 @@ func partitionComments(comments []Comment, validLines map[string]map[int]struct{
 				offDiff = append(offDiff, c)
 				continue
 			}
-			if _, ok := lines[c.Line]; !ok {
+			endHunk, ok := lines[c.Line]
+			if !ok {
 				offDiff = append(offDiff, c)
 				continue
 			}
 			if c.StartLine > 0 {
-				if _, ok := lines[c.StartLine]; !ok {
+				if startHunk, ok := lines[c.StartLine]; !ok || startHunk != endHunk {
 					if c.Suggestion != "" {
-						// Multi-line suggestion range must remain intact; avoid narrowing it silently.
+						// Multi-line suggestions must stay within one diff hunk and remain intact.
 						offDiff = append(offDiff, c)
 						continue
 					}
