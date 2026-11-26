@@ -57,7 +57,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		return nil, fmt.Errorf("instructions are required")
 	}
 
-	req = enrichFromEvent(req)
+	req = HydrateFromEvent(req)
 
 	var cancel context.CancelFunc
 	if dur, err := time.ParseDuration(r.Config.Limits.MaxDuration); err == nil && dur > 0 {
@@ -395,46 +395,6 @@ func extractAssistantOutcome(msgAny any) (string, string) {
 	default:
 		return "", errMsg
 	}
-}
-
-func enrichFromEvent(req Request) Request {
-	if req.EventPath == "" {
-		return req
-	}
-	raw, err := os.ReadFile(req.EventPath)
-	if err != nil {
-		return req
-	}
-	var payload struct {
-		PullRequest struct {
-			Number int `json:"number"`
-			Base   struct {
-				Ref string `json:"ref"`
-			} `json:"base"`
-			Head struct {
-				SHA string `json:"sha"`
-			} `json:"head"`
-		} `json:"pull_request"`
-		Repository struct {
-			FullName string `json:"full_name"`
-		} `json:"repository"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return req
-	}
-	if req.PRNumber == 0 {
-		req.PRNumber = payload.PullRequest.Number
-	}
-	if req.BaseRef == "" {
-		req.BaseRef = payload.PullRequest.Base.Ref
-	}
-	if req.HeadSHA == "" {
-		req.HeadSHA = payload.PullRequest.Head.SHA
-	}
-	if req.Repo == "" {
-		req.Repo = payload.Repository.FullName
-	}
-	return req
 }
 
 func readDiffStat(ctx context.Context, workspace, baseRef, headSHA string) string {

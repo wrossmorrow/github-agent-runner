@@ -1,22 +1,39 @@
-name: Agentic Review
-description: Run a headless read-only agentic review via the local agent sidecar.
+name: Agentic Runner
+description: Run a headless agentic task via the local agent sidecar.
 inputs:
   instructions:
-    description: What the agent should review or check
+    description: What the agent should inspect, verify, or check
     required: true
   fail-on:
     description: Fail the step on severity (none | warning | error)
     default: error
   output:
-    description: Output target (pr-review | comment | stdout)
+    description: Output target (pr-review | comment | issue-comment | stdout)
     default: pr-review
   endpoint:
     description: Local agentrunnerd HTTP endpoint
     default: http://127.0.0.1:8788/review
+outputs:
+  verdict:
+    description: Structured verdict returned by the agent (e.g. APPROVE, COMMENT, REQUEST_CHANGES)
+    value: ${{ steps.run.outputs.verdict }}
+  summary:
+    description: Concise summary returned by the agent
+    value: ${{ steps.run.outputs.summary }}
+  findings:
+    description: Number of findings emitted by the agent
+    value: ${{ steps.run.outputs.findings }}
+  turns:
+    description: Number of agent turns executed
+    value: ${{ steps.run.outputs.turns }}
+  exit-code:
+    description: Exit code determined from fail-on threshold
+    value: ${{ steps.run.outputs.exit-code }}
 runs:
   using: composite
   steps:
-    - shell: bash
+    - id: run
+      shell: bash
       env:
         AGENT_INSTRUCTIONS: ${{ inputs.instructions }}
         AGENT_FAIL_ON: ${{ inputs.fail-on }}
@@ -30,12 +47,13 @@ runs:
         jq -n \
           --arg workspace "$GITHUB_WORKSPACE" \
           --arg eventPath "$GITHUB_EVENT_PATH" \
+          --arg eventName "$GITHUB_EVENT_NAME" \
           --arg instructions "$AGENT_INSTRUCTIONS" \
           --arg failOn "$AGENT_FAIL_ON" \
           --arg output "$AGENT_OUTPUT" \
           --arg repo "$GITHUB_REPOSITORY" \
           --arg runId "$GITHUB_RUN_ID" \
-          '{workspace:$workspace, eventPath:$eventPath, instructions:$instructions, failOn:$failOn, output:$output, repo:$repo, runId:$runId}' \
+          '{workspace:$workspace, eventPath:$eventPath, eventName:$eventName, instructions:$instructions, failOn:$failOn, output:$output, repo:$repo, runId:$runId}' \
         | curl --fail-with-body -sSN -X POST \
             -H 'Content-Type: application/json' \
             --data-binary @- \
@@ -48,5 +66,34 @@ runs:
           exit 1
         fi
 
-        exit_code="$(printf '%s' "${result_line#AGENTRUNNER_RESULT=}" | jq -r '.exitCode // 1')"
+        result_json="${result_line#AGENTRUNNER_RESULT=}"
+        verdict="$(printf '%s' "$result_json" | jq -r '.verdict // ""')"
+        summary="$(printf '%s' "$result_json" | jq -r '.summary // ""')"
+        findings="$(printf '%s' "$result_json" | jq -r '.findings // 0')"
+        turns="$(printf '%s' "$result_json" | jq -r '.turns // 0')"
+        exit_code="$(printf '%s' "$result_json" | jq -r '.exitCode // 1')"
+
+        if [ -n "${GITHUB_OUTPUT:-}" ]; then
+          eof_delim="AGENTRUNNER_EOF_$$_${RANDOM}"
+          {
+            printf 'verdict<<%s\n%s\n%s\n' "$eof_delim" "$verdict" "$eof_delim"
+            printf 'findings=%s\n' "$findings"
+            printf 'turns=%s\n' "$turns"
+            printf 'exit-code=%s\n' "$exit_code"
+            printf 'summary<<%s\n%s\n%s\n' "$eof_delim" "$summary" "$eof_delim"
+          } >> "$GITHUB_OUTPUT"
+        fi
+
+        if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          {
+            printf '### Agentrunner Result\n\n'
+            printf -- '- **Verdict:** `%s`\n' "${verdict:-N/A}"
+            printf -- '- **Findings:** `%s`\n' "$findings"
+            printf -- '- **Turns:** `%s`\n' "$turns"
+            if [ -n "$summary" ]; then
+              printf '\n%s\n' "$summary"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
         exit "$exit_code"

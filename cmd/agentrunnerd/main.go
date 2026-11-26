@@ -1,10 +1,11 @@
 // Command agentrunnerd runs inside the `agent` native sidecar of an ARC v2
-// runner pod, accepting POST /review requests from the stock runner step.
+// runner pod, accepting POST /run (and alias POST /review) requests from the stock runner step.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -99,7 +100,9 @@ func newMux(exec reviewExecutor, mode string) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok\n")
 	})
-	mux.HandleFunc("POST /review", handleReview(exec, mode))
+	handler := handleRun(exec, mode)
+	mux.HandleFunc("POST /run", handler)
+	mux.HandleFunc("POST /review", handler)
 	return mux
 }
 
@@ -112,7 +115,7 @@ type resultTrailer struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func handleReview(exec reviewExecutor, mode string) http.HandlerFunc {
+func handleRun(exec reviewExecutor, mode string) http.HandlerFunc {
 	effectiveMode := mode
 	if effectiveMode == "" {
 		effectiveMode = v1alpha1.AgentModeReadOnly
@@ -129,6 +132,14 @@ func handleReview(exec reviewExecutor, mode string) http.HandlerFunc {
 		}
 		if req.Workspace == "" || req.Instructions == "" {
 			http.Error(w, "workspace and instructions are required", http.StatusBadRequest)
+			return
+		}
+		if err := review.CheckOutputSupport(req.Output); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, review.ErrOutputNotImplemented) {
+				status = http.StatusNotImplemented
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,12 +13,40 @@ import (
 	"strings"
 )
 
+const (
+	OutputStdout           = "stdout"
+	OutputPRReview         = "pr-review"
+	OutputComment          = "comment"
+	OutputIssueComment     = "issue-comment"
+	OutputReleaseDraft     = "release-draft"
+	OutputDeploymentStatus = "deployment-status"
+	OutputBranchCommit     = "branch-commit"
+	OutputRevertPR         = "revert-pr"
+	OutputSuggest          = "suggest"
+)
+
+// ErrOutputNotImplemented marks planned output publishers that are not yet implemented.
+var ErrOutputNotImplemented = errors.New("output mode not yet implemented")
+
+// CheckOutputSupport validates whether req.Output is currently implemented.
+// Planned future outputs wrap ErrOutputNotImplemented so callers can surface HTTP 501.
+func CheckOutputSupport(output string) error {
+	switch output {
+	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment:
+		return nil
+	case OutputReleaseDraft, OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest:
+		return fmt.Errorf("%w: %q", ErrOutputNotImplemented, output)
+	default:
+		return fmt.Errorf("unsupported output mode %q", output)
+	}
+}
+
 // Poster publishes a completed review back to GitHub.
 type Poster interface {
 	PostReview(ctx context.Context, req Request, res *Result) error
 }
 
-// GhPoster posts PR reviews or comments via the `gh` CLI using the token
+// GhPoster posts PR/issue reviews or comments via the `gh` CLI using the token
 // minted by the github-auth sidecar.
 type GhPoster struct {
 	TokenFile string
@@ -26,11 +55,14 @@ type GhPoster struct {
 
 // PostReview submits the structured Result to GitHub as a PR review or comment.
 func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) error {
-	if req.Output == "" || req.Output == "stdout" {
+	if req.Output == "" || req.Output == OutputStdout {
 		return nil
 	}
-	if req.Repo == "" || req.PRNumber <= 0 {
-		return fmt.Errorf("repo and prNumber are required to post output %q", req.Output)
+	if err := CheckOutputSupport(req.Output); err != nil {
+		return err
+	}
+	if req.Repo == "" {
+		return fmt.Errorf("repo is required to post output %q", req.Output)
 	}
 
 	ghBin := p.GHBin
@@ -44,11 +76,28 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 	}
 
 	switch req.Output {
-	case "comment":
+	case OutputIssueComment:
+		issueNum := req.IssueNumber
+		if issueNum <= 0 {
+			issueNum = req.PRNumber
+		}
+		if issueNum <= 0 {
+			return fmt.Errorf("issueNumber is required to post output %q", req.Output)
+		}
+		args := []string{"issue", "comment", strconv.Itoa(issueNum), "--repo", req.Repo, "--body", formatReviewMarkdown(res)}
+		_, err := runGH(ctx, ghBin, token, args, nil)
+		return err
+	case OutputComment:
+		if req.PRNumber <= 0 {
+			return fmt.Errorf("repo and prNumber are required to post output %q", req.Output)
+		}
 		args := []string{"pr", "comment", strconv.Itoa(req.PRNumber), "--repo", req.Repo, "--body", formatReviewMarkdown(res)}
 		_, err := runGH(ctx, ghBin, token, args, nil)
 		return err
-	case "pr-review":
+	case OutputPRReview:
+		if req.PRNumber <= 0 {
+			return fmt.Errorf("repo and prNumber are required to post output %q", req.Output)
+		}
 		args := []string{
 			"api",
 			fmt.Sprintf("repos/%s/pulls/%d/reviews", req.Repo, req.PRNumber),

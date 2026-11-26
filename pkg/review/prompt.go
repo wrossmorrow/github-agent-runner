@@ -70,11 +70,29 @@ func AssembleAgentsMD(dirs ...string) (string, error) {
 func BuildUserPrompt(req Request, diffStat string, hasRepoAgentsMD bool) string {
 	var b strings.Builder
 	b.WriteString("## Review Request\n")
+	if req.EventName != "" {
+		fmt.Fprintf(&b, "- Event: `%s`\n", req.EventName)
+	}
 	if req.Repo != "" {
 		fmt.Fprintf(&b, "- Repository: `%s`\n", req.Repo)
 	}
 	if req.PRNumber > 0 {
 		fmt.Fprintf(&b, "- Pull Request: #%d\n", req.PRNumber)
+	}
+	if req.IssueNumber > 0 && req.IssueNumber != req.PRNumber {
+		fmt.Fprintf(&b, "- Issue: #%d\n", req.IssueNumber)
+	}
+	if req.WorkflowRunID > 0 {
+		fmt.Fprintf(&b, "- Workflow Run: `%d`\n", req.WorkflowRunID)
+	}
+	if req.Tag != "" {
+		fmt.Fprintf(&b, "- Tag: `%s`\n", req.Tag)
+	}
+	if req.Environment != "" {
+		fmt.Fprintf(&b, "- Environment: `%s`\n", req.Environment)
+	}
+	if req.EnvironmentURL != "" {
+		fmt.Fprintf(&b, "- Environment URL: `%s`\n", req.EnvironmentURL)
 	}
 	if req.BaseRef != "" {
 		fmt.Fprintf(&b, "- Base Ref: `%s`\n", req.BaseRef)
