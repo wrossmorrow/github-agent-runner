@@ -107,13 +107,18 @@ Add a workflow to your target repository referencing the scale-set name (`spec.r
 ```yaml
 on: [pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   agent-review:
     runs-on: agentic-go-review
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: wrossmorrow/github-agent-runner/action@v0.0.1
         with:
