@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -79,6 +80,20 @@ func TestHelperPiReview(t *testing.T) {
 					map[string]any{
 						"role":    "assistant",
 						"content": "Everything looks great, LGTM!",
+					},
+				},
+			})
+			continue
+		}
+
+		if mode == "release_markdown" {
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":    "assistant",
+						"content": "# v0.1.0\n\n## Features\n- Added `release-draft`",
 					},
 				},
 			})
@@ -432,6 +447,105 @@ func TestRunnerFormatNudge(t *testing.T) {
 		}, nil)
 		if err == nil || !strings.Contains(err.Error(), "no valid review result JSON") {
 			t.Fatalf("expected JSON parse error without exceeding MaxTurns=1, got %v", err)
+		}
+	})
+}
+
+func TestRunnerReleaseDraftMarkdown(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_WANT_REVIEW_HELPER", "1")
+	t.Setenv("HELPER_MODE", "release_markdown")
+
+	poster := &mockPoster{}
+	runner := &Runner{
+		Config: Config{
+			PiBin:  exe,
+			PiArgs: []string{"-test.run=TestHelperPiReview"},
+			Limits: v1alpha1.LimitsSpec{MaxTurns: 5, MaxDuration: "5s"},
+		},
+		Poster: poster,
+	}
+
+	outcome, err := runner.Run(context.Background(), Request{
+		Workspace:    t.TempDir(),
+		Instructions: "Draft release notes for v0.1.0",
+		Output:       OutputReleaseDraft,
+		Repo:         "org/repo",
+		Tag:          "v0.1.0",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run release-draft failed: %v", err)
+	}
+	if outcome.Result.Title != "v0.1.0" || !strings.Contains(outcome.Result.Body, "Added `release-draft`") {
+		t.Fatalf("unexpected release result: %+v", outcome.Result)
+	}
+	if !poster.called || poster.req.Output != OutputReleaseDraft || poster.req.Tag != "v0.1.0" {
+		t.Fatalf("expected poster called with release-draft request, got %+v", poster)
+	}
+}
+
+func TestResolvePreviousTag(t *testing.T) {
+	runGit := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		full := append([]string{"-C", dir, "-c", "user.name=Test", "-c", "user.email=test@example.com"}, args...)
+		if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+		}
+	}
+
+	t.Run("no prior tag returns empty string", func(t *testing.T) {
+		repo := t.TempDir()
+		runGit(t, repo, "init")
+		if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("init\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo, "add", "README.md")
+		runGit(t, repo, "commit", "-m", "initial commit")
+		runGit(t, repo, "tag", "v0.1.0")
+
+		if got := resolvePreviousTag(context.Background(), repo, "v0.1.0"); got != "" {
+			t.Fatalf("expected empty previous tag, got %q", got)
+		}
+	})
+
+	t.Run("annotated and lightweight tags resolve previous tag", func(t *testing.T) {
+		repo := t.TempDir()
+		runGit(t, repo, "init")
+		if err := os.WriteFile(filepath.Join(repo, "file.txt"), []byte("one\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo, "add", "file.txt")
+		runGit(t, repo, "commit", "-m", "first")
+		runGit(t, repo, "tag", "v0.1.0") // lightweight
+
+		if err := os.WriteFile(filepath.Join(repo, "file.txt"), []byte("two\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo, "add", "file.txt")
+		runGit(t, repo, "commit", "-m", "second")
+		runGit(t, repo, "tag", "-a", "v0.2.0", "-m", "release v0.2.0") // annotated
+
+		if err := os.WriteFile(filepath.Join(repo, "file.txt"), []byte("three\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo, "add", "file.txt")
+		runGit(t, repo, "commit", "-m", "third")
+		runGit(t, repo, "tag", "v0.3.0") // lightweight
+
+		if got := resolvePreviousTag(context.Background(), repo, "v0.2.0"); got != "v0.1.0" {
+			t.Fatalf("resolvePreviousTag(annotated v0.2.0) = %q, want v0.1.0", got)
+		}
+		if got := resolvePreviousTag(context.Background(), repo, "v0.3.0"); got != "v0.2.0" {
+			t.Fatalf("resolvePreviousTag(lightweight v0.3.0) = %q, want v0.2.0", got)
+		}
+		if got := resolvePreviousTag(context.Background(), repo, ""); got != "v0.2.0" {
+			t.Fatalf("resolvePreviousTag(HEAD fallback) = %q, want v0.2.0", got)
+		}
+		if got := resolvePreviousTag(context.Background(), repo, "--help"); got != "v0.2.0" {
+			t.Fatalf("resolvePreviousTag(--help fallback) = %q, want v0.2.0", got)
 		}
 	})
 }

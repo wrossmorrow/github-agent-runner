@@ -165,12 +165,12 @@ exit 0
 }
 
 func TestCheckOutputSupport(t *testing.T) {
-	for _, okOut := range []string{"", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment} {
+	for _, okOut := range []string{"", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft} {
 		if err := CheckOutputSupport(okOut); err != nil {
 			t.Errorf("CheckOutputSupport(%q) unexpected error: %v", okOut, err)
 		}
 	}
-	for _, futureOut := range []string{OutputReleaseDraft, OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest} {
+	for _, futureOut := range []string{OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest} {
 		err := CheckOutputSupport(futureOut)
 		if !errors.Is(err, ErrOutputNotImplemented) {
 			t.Errorf("CheckOutputSupport(%q) = %v, want ErrOutputNotImplemented", futureOut, err)
@@ -243,4 +243,96 @@ printf '%s\n' "$*" > "` + argsFile + `"
 			}
 		})
 	}
+}
+
+func TestGhPosterReleaseDraft(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("ghs_test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argsLog := filepath.Join(dir, "args.log")
+	notesLog := filepath.Join(dir, "notes.md")
+	stateFile := filepath.Join(dir, "view_state")
+	ghScript := filepath.Join(dir, "fake-gh.sh")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "` + argsLog + `"
+if [ "$1" = "release" ] && [ "$2" = "view" ]; then
+  state="$(cat "` + stateFile + `" 2>/dev/null || echo missing)"
+  if [ "$state" = "draft" ]; then
+    echo '{"isDraft":true}'
+    exit 0
+  fi
+  if [ "$state" = "published" ]; then
+    echo '{"isDraft":false}'
+    exit 0
+  fi
+  echo "release not found" >&2
+  exit 1
+fi
+cat > "` + notesLog + `"
+`
+	if err := os.WriteFile(ghScript, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	poster := &GhPoster{TokenFile: tokenFile, GHBin: ghScript}
+	res := &Result{
+		Verdict: "COMMENT",
+		Title:   "v0.1.0",
+		Summary: "Initial release",
+		Body:    "## Features\n- Added `release-draft`",
+	}
+
+	t.Run("creates new draft release", func(t *testing.T) {
+		_ = os.Remove(argsLog)
+		_ = os.WriteFile(stateFile, []byte("missing"), 0o600)
+		if err := poster.PostReview(context.Background(), Request{Repo: "org/repo", Tag: "v0.1.0", Output: OutputReleaseDraft}, res); err != nil {
+			t.Fatalf("PostReview create draft failed: %v", err)
+		}
+		argsRaw, _ := os.ReadFile(argsLog)
+		if !strings.Contains(string(argsRaw), "release create v0.1.0 --repo org/repo --draft --verify-tag --title v0.1.0 --notes-file -") {
+			t.Fatalf("unexpected gh create args: %q", string(argsRaw))
+		}
+		notesRaw, _ := os.ReadFile(notesLog)
+		if !strings.Contains(string(notesRaw), "Added `release-draft`") {
+			t.Fatalf("unexpected release notes stdin: %q", string(notesRaw))
+		}
+	})
+
+	t.Run("edits existing draft release", func(t *testing.T) {
+		_ = os.Remove(argsLog)
+		_ = os.WriteFile(stateFile, []byte("draft"), 0o600)
+		if err := poster.PostReview(context.Background(), Request{Repo: "org/repo", Tag: "v0.1.0", Output: OutputReleaseDraft}, res); err != nil {
+			t.Fatalf("PostReview edit draft failed: %v", err)
+		}
+		argsRaw, _ := os.ReadFile(argsLog)
+		if !strings.Contains(string(argsRaw), "release edit v0.1.0 --repo org/repo --draft --title v0.1.0 --notes-file -") {
+			t.Fatalf("unexpected gh edit args: %q", string(argsRaw))
+		}
+	})
+
+	t.Run("refuses to overwrite published release", func(t *testing.T) {
+		_ = os.Remove(argsLog)
+		_ = os.WriteFile(stateFile, []byte("published"), 0o600)
+		err := poster.PostReview(context.Background(), Request{Repo: "org/repo", Tag: "v0.1.0", Output: OutputReleaseDraft}, res)
+		if err == nil || !strings.Contains(err.Error(), "published release") {
+			t.Fatalf("expected published release error, got %v", err)
+		}
+		argsRaw, _ := os.ReadFile(argsLog)
+		if strings.Contains(string(argsRaw), "release edit") || strings.Contains(string(argsRaw), "release create") {
+			t.Fatalf("should not call edit or create on published release: %q", string(argsRaw))
+		}
+	})
+
+	t.Run("rejects leading-dash tag before invoking gh", func(t *testing.T) {
+		_ = os.Remove(argsLog)
+		err := poster.PostReview(context.Background(), Request{Repo: "org/repo", Tag: "--help", Output: OutputReleaseDraft}, res)
+		if err == nil || !strings.Contains(err.Error(), "invalid release tag") {
+			t.Fatalf("expected invalid release tag error, got %v", err)
+		}
+		if _, statErr := os.Stat(argsLog); !os.IsNotExist(statErr) {
+			t.Fatalf("gh should not have been invoked for --help tag, stat err=%v", statErr)
+		}
+	})
 }

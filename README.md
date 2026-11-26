@@ -135,7 +135,8 @@ jobs:
 | :--- | :--- | :--- |
 | `instructions` | *(required)* | Task prompt passed to the agent (e.g. review criteria, check rules) |
 | `fail-on` | `error` | Fail the check when any finding meets severity (`none` \| `warning` \| `error`) |
-| `output` | `pr-review` | Where to publish results (`pr-review` \| `comment` \| `issue-comment` \| `stdout`); `issue-comment` requires `Issues: Read & write` on the GitHub App (use a dedicated issue-bot App or grant `Issues: R/W`) |
+| `output` | `pr-review` | Where to publish results (`pr-review` \| `comment` \| `issue-comment` \| `release-draft` \| `stdout`); `issue-comment` requires `Issues: Read & write` and `release-draft` requires `Contents: Read & write` (with branch/tag protection) on the GitHub App |
+| `tag` | `""` | Git tag name for `release-draft` output (defaults to `GITHUB_REF_NAME` on tag pushes) |
 | `endpoint` | `http://127.0.0.1:8788/review` | Local `agentrunnerd` sidecar HTTP endpoint (`POST /run` and backwards-compatible alias `POST /review`) |
 
 ### Action Outputs

@@ -1,5 +1,5 @@
 # =============================================================================
-# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+# STATUS: IMPLEMENTED (v0.0.7+) (see examples/FUTURE.md)
 #
 # TIER & PURPOSE:
 #   Tier 1 (Read-Only Code) — Release Notes Drafter.
@@ -9,38 +9,51 @@
 #
 # REQUIRED GITHUB APP PERMISSIONS (release-bot):
 #   - Contents: Read & write   (needed by GitHub Releases API to create drafts;
-#                               protect branches so main/tags cannot be rewritten)
+#                               protect branches/tags so main/tags cannot be rewritten)
 #   - Pull requests: Read-only
 #
-# MISSING IN AGENTRUNNER TODAY:
-#   - `output: release-draft` poster in pkg/review/poster.go (`gh release create --draft`).
-#   - Tag-range context resolution (finding previous tag via `git describe --tags`
-#     instead of PR base/head refs).
-#   - Non-JSON / Markdown release-notes output mode in agentrunnerd.
+# SETUP NOTES:
+#   - `output: release-draft`, tag-range resolution (`resolvePreviousTag`), and
+#     Markdown release output are implemented in pkg/review and action/action.yml.
+#   - Deploy with a dedicated `release-bot` GitHub App (or grant `Contents: R/W`
+#     with branch/tag protection) on the runner deployment.
 # =============================================================================
 
-name: Draft Release Notes (Future)
+name: Draft Release Notes
 
 on:
   push:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to draft notes for
+        required: true
+        type: string
+
+# GITHUB_TOKEN only needs read for checkout; the `release-bot` GitHub App
+# mounted via github-auth mints the `Contents: Read & write` token for drafts.
+permissions:
+  contents: read
 
 jobs:
   draft-release:
     runs-on: agentic-go-review
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: wrossmorrow/github-agent-runner/action@vx.y.z
         with:
           instructions: |
-            Identify the previous release tag before ${{ github.ref_name }}, inspect the commit
+            Identify the previous release tag before ${{ inputs.tag || github.ref_name }}, inspect the commit
             history and actual code diff since that tag, and draft release notes grouped into:
             Breaking Changes, Features, Bug Fixes, and Tooling/CI. Verify every referenced flag
-            or CRD field against the actual code at ${{ github.ref_name }}.
+            or CRD field against the actual code at ${{ inputs.tag || github.ref_name }}.
           fail-on: none
           output: release-draft
+          tag: ${{ inputs.tag || github.ref_name }}

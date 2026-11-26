@@ -20,6 +20,10 @@ End your final response with a single JSON object matching:
   ]
 }`
 
+const DefaultReleaseNotesSystemPrompt = `You are a read-only release notes drafting agent running in CI.
+Inspect the repository commits, pull requests, and actual code diff since the previous release tag using your read and git tools. Do not modify files or push commits.
+Verify every referenced CLI flag, CRD field, or API change against the code at the target tag, and end your final response with clean Markdown release notes.`
+
 // AssembleAgentsMD collects *.md files across the given directories, sorted
 // lexicographically by basename so numbered fragments (00-base.md,
 // 10-toolchain-image.md, 15-toolchain-crd.md, 20-deployment.md) merge in order.
@@ -116,6 +120,50 @@ func BuildUserPrompt(req Request, diffStat string, hasRepoAgentsMD bool) string 
 	}
 
 	return b.String()
+}
+
+// ExtractReleaseResult parses release notes from either structured JSON
+// (containing title/body/summary) or raw Markdown emitted by the assistant.
+func ExtractReleaseResult(text, fallbackTag string) (*Result, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil, fmt.Errorf("assistant returned empty release notes")
+	}
+	if res, err := ExtractReviewResult(trimmed); err == nil {
+		if strings.TrimSpace(res.Title) == "" {
+			res.Title = fallbackTag
+		}
+		if strings.TrimSpace(res.Body) == "" {
+			if strings.TrimSpace(res.Summary) != "" {
+				res.Body = strings.TrimSpace(res.Summary)
+			} else {
+				res.Body = trimmed
+			}
+		}
+		if strings.TrimSpace(res.Summary) == "" {
+			res.Summary = firstMarkdownSummaryLine(res.Body)
+		}
+		return res, nil
+	}
+	return &Result{
+		Verdict: "COMMENT",
+		Title:   fallbackTag,
+		Summary: firstMarkdownSummaryLine(trimmed),
+		Body:    trimmed,
+	}, nil
+}
+
+func firstMarkdownSummaryLine(md string) string {
+	for _, line := range strings.Split(md, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(line, "#-* "))
+		if line != "" {
+			if runes := []rune(line); len(runes) > 160 {
+				return string(runes[:157]) + "..."
+			}
+			return line
+		}
+	}
+	return "Draft release notes generated"
 }
 
 // ExtractReviewResult parses a Result from raw JSON or a ```json fenced block

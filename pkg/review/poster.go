@@ -32,9 +32,9 @@ var ErrOutputNotImplemented = errors.New("output mode not yet implemented")
 // Planned future outputs wrap ErrOutputNotImplemented so callers can surface HTTP 501.
 func CheckOutputSupport(output string) error {
 	switch output {
-	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment:
+	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft:
 		return nil
-	case OutputReleaseDraft, OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest:
+	case OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest:
 		return fmt.Errorf("%w: %q", ErrOutputNotImplemented, output)
 	default:
 		return fmt.Errorf("unsupported output mode %q", output)
@@ -76,6 +76,8 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 	}
 
 	switch req.Output {
+	case OutputReleaseDraft:
+		return p.postReleaseDraft(ctx, ghBin, token, req, res)
 	case OutputIssueComment:
 		issueNum := req.IssueNumber
 		if issueNum <= 0 {
@@ -133,6 +135,55 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 	default:
 		return fmt.Errorf("unsupported output mode %q", req.Output)
 	}
+}
+
+func validateReleaseTag(tag string) (string, error) {
+	trimmed := strings.TrimSpace(tag)
+	if trimmed == "" {
+		return "", fmt.Errorf("tag is required to post output %q", OutputReleaseDraft)
+	}
+	if strings.HasPrefix(trimmed, "-") || strings.ContainsAny(trimmed, " \t\n\r") {
+		return "", fmt.Errorf("invalid release tag %q", tag)
+	}
+	return trimmed, nil
+}
+
+func (p *GhPoster) postReleaseDraft(ctx context.Context, ghBin, token string, req Request, res *Result) error {
+	tag, err := validateReleaseTag(req.Tag)
+	if err != nil {
+		return err
+	}
+	title := strings.TrimSpace(res.Title)
+	if title == "" {
+		title = tag
+	}
+	notes := strings.TrimSpace(res.Body)
+	if notes == "" {
+		notes = strings.TrimSpace(res.Summary)
+	}
+	if notes == "" {
+		notes = formatReviewMarkdown(res)
+	}
+
+	viewArgs := []string{"release", "view", tag, "--repo", req.Repo, "--json", "isDraft"}
+	if out, err := runGH(ctx, ghBin, token, viewArgs, nil); err == nil {
+		var info struct {
+			IsDraft bool `json:"isDraft"`
+		}
+		if jerr := json.Unmarshal(out, &info); jerr != nil {
+			return fmt.Errorf("parsing release view response for %q: %w", tag, jerr)
+		}
+		if !info.IsDraft {
+			return fmt.Errorf("refusing to overwrite published release %q", tag)
+		}
+		editArgs := []string{"release", "edit", tag, "--repo", req.Repo, "--draft", "--title", title, "--notes-file", "-"}
+		_, err = runGH(ctx, ghBin, token, editArgs, []byte(notes+"\n"))
+		return err
+	}
+
+	createArgs := []string{"release", "create", tag, "--repo", req.Repo, "--draft", "--verify-tag", "--title", title, "--notes-file", "-"}
+	_, err = runGH(ctx, ghBin, token, createArgs, []byte(notes+"\n"))
+	return err
 }
 
 func runGH(ctx context.Context, ghBin, token string, args []string, stdin []byte) ([]byte, error) {
