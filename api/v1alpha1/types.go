@@ -114,11 +114,13 @@ type ConfigMapKeyRef struct {
 	Key           string `json:"key,omitempty"`
 }
 
-// LimitsSpec bounds agent execution per review step.
+// LimitsSpec bounds agent execution per review step and model request.
 type LimitsSpec struct {
-	MaxTurns    int     `json:"maxTurns,omitempty"`
-	MaxDuration string  `json:"maxDuration,omitempty"`
-	MaxCostUSD  float64 `json:"maxCostUsd,omitempty"`
+	MaxTurns      int     `json:"maxTurns,omitempty"`
+	MaxDuration   string  `json:"maxDuration,omitempty"`
+	MaxCostUSD    float64 `json:"maxCostUsd,omitempty"`
+	ContextWindow int     `json:"contextWindow,omitempty"`
+	MaxTokens     int     `json:"maxTokens,omitempty"`
 }
 
 // Validate checks required fields and invariants on AgenticRunnerToolchain.
@@ -176,6 +178,15 @@ func (d *AgenticRunnerDeployment) Validate() error {
 	}
 	if d.Spec.Agent.Limits.MaxCostUSD < 0 {
 		errs = append(errs, errors.New("spec.agent.limits.maxCostUsd must be >= 0"))
+	}
+	if d.Spec.Agent.Limits.ContextWindow < 0 {
+		errs = append(errs, errors.New("spec.agent.limits.contextWindow must be >= 0"))
+	}
+	if d.Spec.Agent.Limits.MaxTokens < 0 {
+		errs = append(errs, errors.New("spec.agent.limits.maxTokens must be >= 0"))
+	}
+	if d.Spec.Agent.Limits.ContextWindow > 0 && d.Spec.Agent.Limits.MaxTokens > d.Spec.Agent.Limits.ContextWindow {
+		errs = append(errs, errors.New("spec.agent.limits.maxTokens must be <= spec.agent.limits.contextWindow"))
 	}
 	if dur := d.Spec.Agent.Limits.MaxDuration; dur != "" {
 		parsed, err := time.ParseDuration(dur)

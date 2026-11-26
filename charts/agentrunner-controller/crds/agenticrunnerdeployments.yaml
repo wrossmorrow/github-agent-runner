@@ -100,6 +100,12 @@ spec:
                         maxCostUsd:
                           type: number
                           minimum: 0
+                        contextWindow:
+                          type: integer
+                          minimum: 0
+                        maxTokens:
+                          type: integer
+                          minimum: 0
                     systemPromptRef:
                       type: object
                       required: [configMapName]

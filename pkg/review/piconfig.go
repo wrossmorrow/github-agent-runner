@@ -23,9 +23,11 @@ type piProviderConfig struct {
 }
 
 type piModelConfig struct {
-	ID     string        `json:"id"`
-	Name   string        `json:"name,omitempty"`
-	Compat piModelCompat `json:"compat"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name,omitempty"`
+	ContextWindow int           `json:"contextWindow,omitempty"`
+	MaxTokens     int           `json:"maxTokens,omitempty"`
+	Compat        piModelCompat `json:"compat"`
 }
 
 type piModelCompat struct {
@@ -88,8 +90,10 @@ func writePiConfigDir(cfg Config, req Request, agentsMD string, gatewayToken str
 					Headers:    headers,
 					Models: []piModelConfig{
 						{
-							ID:   cfg.Model,
-							Name: cfg.Model,
+							ID:            cfg.Model,
+							Name:          cfg.Model,
+							ContextWindow: cfg.Limits.ContextWindow,
+							MaxTokens:     cfg.Limits.MaxTokens,
 							Compat: piModelCompat{
 								SupportsStore:         false,
 								SupportsDeveloperRole: false,

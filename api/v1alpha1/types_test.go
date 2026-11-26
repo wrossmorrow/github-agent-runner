@@ -150,6 +150,24 @@ func TestDeploymentValidate(t *testing.T) {
 			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Agent.Limits.MaxDuration = "forever" },
 			wantErr: "maxDuration",
 		},
+		{
+			name:    "negative contextWindow",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Agent.Limits.ContextWindow = -1 },
+			wantErr: "contextWindow",
+		},
+		{
+			name:    "negative maxTokens",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Agent.Limits.MaxTokens = -1 },
+			wantErr: "maxTokens",
+		},
+		{
+			name: "maxTokens exceeds contextWindow",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.Limits.ContextWindow = 8192
+				d.Spec.Agent.Limits.MaxTokens = 16384
+			},
+			wantErr: "maxTokens must be <=",
+		},
 	}
 
 	for _, tc := range cases {

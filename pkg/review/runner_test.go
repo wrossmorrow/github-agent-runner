@@ -178,6 +178,10 @@ func TestWritePiConfigDir(t *testing.T) {
 	dir, err := writePiConfigDir(Config{
 		Model:           "flint",
 		GatewayEndpoint: "http://host.docker.internal:11500/v1",
+		Limits: v1alpha1.LimitsSpec{
+			ContextWindow: 262144,
+			MaxTokens:     32768,
+		},
 	}, Request{
 		Repo:     "my-org/my-repo",
 		RunID:    "999",
@@ -216,6 +220,9 @@ func TestWritePiConfigDir(t *testing.T) {
 	}
 	if len(gw.Models) != 1 || gw.Models[0].ID != "flint" || gw.Models[0].Compat.MaxTokensField != "max_tokens" {
 		t.Fatalf("unexpected model config: %+v", gw.Models)
+	}
+	if gw.Models[0].ContextWindow != 262144 || gw.Models[0].MaxTokens != 32768 {
+		t.Fatalf("unexpected token limits in model config: %+v", gw.Models[0])
 	}
 }
 
