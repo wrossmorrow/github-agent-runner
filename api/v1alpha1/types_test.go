@@ -91,7 +91,7 @@ func TestDeploymentValidate(t *testing.T) {
 		obj := validDeployment()
 		obj.Spec.Agent.Mode = mode
 		obj.Spec.Agent.EgressAllowlist = []string{"staging.internal.example"}
-		obj.Spec.Runner.ServiceAccountName = "deploy-verifier-ro"
+		obj.Spec.Runner.ServiceAccountName = "deploy-verifier.ro"
 		if err := obj.Validate(); err != nil {
 			t.Fatalf("expected valid deployment with mode %q, got %v", mode, err)
 		}
@@ -199,8 +199,18 @@ func TestDeploymentValidate(t *testing.T) {
 			wantErr: "spec.agent.egressAllowlist",
 		},
 		{
-			name:    "invalid serviceAccountName",
+			name:    "invalid serviceAccountName with slash",
 			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Runner.ServiceAccountName = "ns/sa" },
+			wantErr: "serviceAccountName",
+		},
+		{
+			name:    "invalid serviceAccountName uppercase and underscore",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Runner.ServiceAccountName = "Deploy_Verifier" },
+			wantErr: "serviceAccountName",
+		},
+		{
+			name:    "invalid serviceAccountName leading hyphen",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Runner.ServiceAccountName = "-bad" },
 			wantErr: "serviceAccountName",
 		},
 		{

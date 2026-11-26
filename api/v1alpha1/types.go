@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -155,6 +156,12 @@ func validateEgressAllowlist(field string, hosts []string) []error {
 	return errs
 }
 
+var dns1123SubdomainRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
+func isDNS1123Subdomain(name string) bool {
+	return len(name) > 0 && len(name) <= 253 && dns1123SubdomainRegex.MatchString(name)
+}
+
 // Validate checks required fields and invariants on AgenticRunnerDeployment.
 func (d *AgenticRunnerDeployment) Validate() error {
 	var errs []error
@@ -167,8 +174,8 @@ func (d *AgenticRunnerDeployment) Validate() error {
 	if strings.TrimSpace(d.Spec.Runner.RunnerScaleSetName) == "" {
 		errs = append(errs, errors.New("spec.runner.runnerScaleSetName is required"))
 	}
-	if sa := d.Spec.Runner.ServiceAccountName; sa != "" && (strings.TrimSpace(sa) != sa || strings.ContainsAny(sa, " \t\n\r/")) {
-		errs = append(errs, fmt.Errorf("invalid spec.runner.serviceAccountName %q", sa))
+	if sa := d.Spec.Runner.ServiceAccountName; sa != "" && !isDNS1123Subdomain(sa) {
+		errs = append(errs, fmt.Errorf("invalid spec.runner.serviceAccountName %q: must be a lowercase RFC 1123 subdomain", sa))
 	}
 	if d.Spec.Runner.MinRunners < 0 {
 		errs = append(errs, errors.New("spec.runner.minRunners must be >= 0"))

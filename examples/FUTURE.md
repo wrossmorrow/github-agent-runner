@@ -142,12 +142,12 @@ A full autonomous PR lifecycle (trigger → create PR → run CI & review → fi
 ## 4. Missing Pieces to Get There
 
 ### A. CRDs & Controller (`api/v1alpha1/`, `pkg/render/`, `pkg/controller/`)
-- **Task / capability modes**: Declare allowed agent capabilities on `AgenticRunnerDeployment` (e.g., `mode: read-only | suggest | write-branch`) rather than assuming every deployment is a PR reviewer.
-- **Rate limits & loop budgets**: CRD fields for `limits.maxIterationsPerPR`, `limits.cooldownSeconds`, and per-deployment concurrency/budget metadata forwarded to the gateway and `agentrunnerd`.
+- **Task / capability modes** *(implemented in CRD & renderer; non-`read-only` runtime modes currently fail closed with `501` in `agentrunnerd` until Section B/C land)*: Declare allowed agent capabilities on `AgenticRunnerDeployment` (`spec.agent.mode: read-only | suggest | write-branch`) rather than assuming every deployment is a PR reviewer.
+- **Rate limits & loop budgets**: CRD fields for `limits.maxIterationsPerPR`, `limits.cooldownSeconds`, and per-deployment concurrency/budget metadata forwarded to the gateway and `agentrunnerd`. (`limits.maxTransportRetries` is implemented for transient mid-stream errors.)
 - **Workspace & git write permissions**: For Tier 3 runners, align `/home/runner/_work` write/git-push ergonomics cleanly with `runner` UID `1001` and `agent` UID `1000` (today `agent` only needs read + `git diff` access).
-- **Workload Identity / read-only `ServiceAccount`**: Support `spec.runner.serviceAccountName` and/or cloud Workload Identity annotations so deployment verifiers can hold narrowly scoped read-only Kubernetes/observability access without static secrets in GitHub Actions.
+- **Workload Identity / read-only `ServiceAccount`** *(`spec.runner.serviceAccountName` implemented in CRD & renderer)*: Allows deployment pods (including ARC v2 runner/sidecar pods via `AutoscalingRunnerSet.spec.template.spec.serviceAccountName`) to hold narrowly scoped read-only Kubernetes/observability access via cloud Workload Identity without static secrets in GitHub Actions.
 - **Session archival config**: Optional S3/GCS bucket & prefix settings on `AgenticRunnerDeployment` so `agentrunnerd` persists JSONL transcripts and `metadata.json` for post-mortem debugging of multi-step runs.
-- **Per-deployment egress additions**: Allow `AgenticRunnerDeployment` to append deployment-specific domains (e.g., internal artifact registries or issue trackers) on top of `AgenticRunnerToolchain.spec.egressAllowlist`.
+- **Per-deployment egress additions** *(`spec.agent.egressAllowlist` implemented in CRD & renderer)*: Appends deployment-specific domains (e.g., internal artifact registries, staging URLs, or issue trackers) on top of `AgenticRunnerToolchain.spec.egressAllowlist`.
 
 ### B. `agentrunnerd` & GitHub Action (`cmd/agentrunnerd/`, `pkg/review/`, `action/`)
 - **Generalized task endpoints/modes**: Move beyond `POST /review` (`pkg/review`) to a general `POST /run` supporting multiple structured output schemas and GitHub publishers:
