@@ -189,24 +189,36 @@ func sendPromptWithTransportRetries(
 	turns *int,
 	logOut io.Writer,
 ) (string, error) {
+	skipSend := false
 	for attempt := 0; ; attempt++ {
-		msg := initialMsg
-		if attempt > 0 {
-			msg = retryMsg
-		}
-		promptCmd := map[string]any{
-			"type":         "prompt",
-			"message":      msg,
-			"systemPrompt": systemPrompt,
-		}
+		if !skipSend {
+			msg := initialMsg
+			if attempt > 0 {
+				msg = retryMsg
+			}
+			promptCmd := map[string]any{
+				"type":         "prompt",
+				"message":      msg,
+				"systemPrompt": systemPrompt,
+			}
 
-		res, err := client.Send(ctx, promptCmd)
-		if err != nil {
-			return "", fmt.Errorf("sending prompt: %w", err)
+			res, err := client.Send(ctx, promptCmd)
+			if err != nil {
+				return "", fmt.Errorf("sending prompt: %w", err)
+			}
+			if !res.Success && attempt > 0 && strings.Contains(strings.ToLower(res.Error), "already processing") {
+				_, _ = fmt.Fprintln(logOut, "agentrunner: pi still processing; queuing retry prompt with streamingBehavior=followUp...")
+				promptCmd["streamingBehavior"] = "followUp"
+				res, err = client.Send(ctx, promptCmd)
+				if err != nil {
+					return "", fmt.Errorf("sending followUp prompt: %w", err)
+				}
+			}
+			if !res.Success {
+				return "", fmt.Errorf("prompt rejected: %s", res.Error)
+			}
 		}
-		if !res.Success {
-			return "", fmt.Errorf("prompt rejected: %s", res.Error)
-		}
+		skipSend = false
 
 		remainingTurns := 0
 		if maxTurns > 0 {
@@ -232,12 +244,46 @@ func sendPromptWithTransportRetries(
 
 		delay := backoff * time.Duration(attempt+1)
 		_, _ = fmt.Fprintf(logOut, "transient model transport error (%v); retrying in-session (%d/%d) after %s...\n", err, attempt+1, maxRetries, delay)
-		timer := time.NewTimer(delay)
+		piActive, waitErr := waitForBackoffOrActiveTurn(ctx, events, delay, turns, logOut)
+		if waitErr != nil {
+			return "", waitErr
+		}
+		skipSend = piActive
+	}
+}
+
+func waitForBackoffOrActiveTurn(
+	ctx context.Context,
+	events <-chan pirpc.Event,
+	delay time.Duration,
+	turns *int,
+	logOut io.Writer,
+) (bool, error) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	for {
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return "", ctx.Err()
+			return false, ctx.Err()
 		case <-timer.C:
+			return false, nil
+		case ev, ok := <-events:
+			if !ok {
+				return false, fmt.Errorf("pi rpc event stream closed unexpectedly")
+			}
+			evType, _ := ev["type"].(string)
+			switch evType {
+			case "auto_retry_start", "agent_start":
+				_, _ = fmt.Fprintf(logOut, "agentrunner: pi initiated internal retry (%s); awaiting active turn...\n", evType)
+				return true, nil
+			case "turn_start":
+				*turns++
+				_, _ = fmt.Fprintln(logOut, "agentrunner: pi started next turn during backoff; awaiting active turn...")
+				return true, nil
+			case "session_closed":
+				return false, fmt.Errorf("pi session closed during retry backoff (%v)", ev["endReason"])
+			}
 		}
 	}
 }
