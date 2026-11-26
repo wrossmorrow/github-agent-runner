@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,5 +161,61 @@ exit 0
 	body, _ := retry["body"].(string)
 	if !strings.Contains(body, "Outside hunk") {
 		t.Fatalf("expected fallback body to preserve all findings, got:\n%s", body)
+	}
+}
+
+func TestCheckOutputSupport(t *testing.T) {
+	for _, okOut := range []string{"", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment} {
+		if err := CheckOutputSupport(okOut); err != nil {
+			t.Errorf("CheckOutputSupport(%q) unexpected error: %v", okOut, err)
+		}
+	}
+	for _, futureOut := range []string{OutputReleaseDraft, OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest} {
+		err := CheckOutputSupport(futureOut)
+		if !errors.Is(err, ErrOutputNotImplemented) {
+			t.Errorf("CheckOutputSupport(%q) = %v, want ErrOutputNotImplemented", futureOut, err)
+		}
+	}
+	unknownErr := CheckOutputSupport("unknown-target")
+	if unknownErr == nil || errors.Is(unknownErr, ErrOutputNotImplemented) {
+		t.Errorf("expected plain error for unknown output, got %v", unknownErr)
+	}
+}
+
+func TestGhPosterIssueComment(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("ghs_test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argsFile := filepath.Join(dir, "args.txt")
+	ghScript := filepath.Join(dir, "fake-gh.sh")
+	script := `#!/bin/sh
+printf '%s\n' "$*" > "` + argsFile + `"
+`
+	if err := os.WriteFile(ghScript, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	poster := &GhPoster{TokenFile: tokenFile, GHBin: ghScript}
+	err := poster.PostReview(context.Background(), Request{
+		Repo:        "org/repo",
+		IssueNumber: 88,
+		Output:      OutputIssueComment,
+	}, &Result{
+		Verdict: "COMMENT",
+		Summary: "Reproduced bug locally.",
+	})
+	if err != nil {
+		t.Fatalf("PostReview issue-comment failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "issue comment 88 --repo org/repo") {
+		t.Fatalf("expected gh issue comment invocation, got %q", got)
 	}
 }
