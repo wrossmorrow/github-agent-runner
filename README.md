@@ -135,8 +135,18 @@ jobs:
 | :--- | :--- | :--- |
 | `instructions` | *(required)* | Task prompt passed to the agent (e.g. review criteria, check rules) |
 | `fail-on` | `error` | Fail the check when any finding meets severity (`none` \| `warning` \| `error`) |
-| `output` | `pr-review` | Where to publish results (`pr-review` \| `comment` \| `stdout`) |
-| `endpoint` | `http://127.0.0.1:8788/review` | Local `agentrunnerd` sidecar HTTP endpoint |
+| `output` | `pr-review` | Where to publish results (`pr-review` \| `comment` \| `issue-comment` \| `stdout`) |
+| `endpoint` | `http://127.0.0.1:8788/review` | Local `agentrunnerd` sidecar HTTP endpoint (`POST /run` and backwards-compatible alias `POST /review`) |
+
+### Action Outputs
+
+| Output | Description |
+| :--- | :--- |
+| `verdict` | Structured verdict returned by the agent (e.g. `APPROVE`, `COMMENT`, `REQUEST_CHANGES`) |
+| `summary` | Concise summary returned by the agent |
+| `findings` | Number of findings emitted by the agent |
+| `turns` | Number of agent turns executed |
+| `exit-code` | Exit code determined from `fail-on` threshold |
 
 ---
 

@@ -76,7 +76,7 @@ runs:
         if [ -n "${GITHUB_OUTPUT:-}" ]; then
           eof_delim="AGENTRUNNER_EOF_$$_${RANDOM}"
           {
-            printf 'verdict=%s\n' "$verdict"
+            printf 'verdict<<%s\n%s\n%s\n' "$eof_delim" "$verdict" "$eof_delim"
             printf 'findings=%s\n' "$findings"
             printf 'turns=%s\n' "$turns"
             printf 'exit-code=%s\n' "$exit_code"

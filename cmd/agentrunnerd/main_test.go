@@ -111,6 +111,7 @@ func TestOutputValidationOnRun(t *testing.T) {
 		{review.OutputDeploymentStatus, http.StatusNotImplemented},
 		{review.OutputBranchCommit, http.StatusNotImplemented},
 		{review.OutputRevertPR, http.StatusNotImplemented},
+		{review.OutputSuggest, http.StatusNotImplemented},
 		{"bogus-output", http.StatusBadRequest},
 	}
 

@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const nullGitSHA = "0000000000000000000000000000000000000000"
+
 // HydrateFromEvent enriches req with context fields parsed from GitHub's
 // GITHUB_EVENT_PATH JSON payload without overwriting values already set on req.
 func HydrateFromEvent(req Request) Request {
@@ -99,7 +101,7 @@ func HydrateFromEvent(req Request) Request {
 	if req.Tag == "" && strings.HasPrefix(payload.Ref, "refs/tags/") {
 		req.Tag = strings.TrimPrefix(payload.Ref, "refs/tags/")
 	}
-	if req.HeadSHA == "" && payload.After != "" {
+	if req.HeadSHA == "" && payload.After != "" && payload.After != nullGitSHA {
 		req.HeadSHA = payload.After
 	}
 

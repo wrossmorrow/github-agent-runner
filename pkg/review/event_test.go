@@ -66,6 +66,18 @@ func TestHydrateFromEventAllShapes(t *testing.T) {
 		}
 	})
 
+	t.Run("deleted push tag ignores null SHA", func(t *testing.T) {
+		ep := writeEvent(t, `{
+			"ref": "refs/tags/v1.2.3",
+			"after": "0000000000000000000000000000000000000000",
+			"repository": {"full_name": "org/repo"}
+		}`)
+		got := HydrateFromEvent(Request{EventPath: ep, EventName: "push"})
+		if got.Tag != "v1.2.3" || got.HeadSHA != "" {
+			t.Fatalf("expected empty HeadSHA on deleted tag push, got %+v", got)
+		}
+	})
+
 	t.Run("deployment_status without overwriting explicit fields", func(t *testing.T) {
 		ep := writeEvent(t, `{
 			"repository": {"full_name": "org/repo"},
