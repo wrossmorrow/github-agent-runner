@@ -408,11 +408,11 @@ func buildAutoscalingRunnerSet(
 			"value": "/run/secrets/gh-app/" + keyFile,
 		})
 	}
-	if dep.Spec.Agent.GitHubAppID != "" {
-		ghAuthEnv = append(ghAuthEnv, K8sObject{"name": "GITHUB_APP_ID", "value": dep.Spec.Agent.GitHubAppID})
+	if envObj, ok := resolveGitHubAppEnv("GITHUB_APP_ID", dep.Spec.Agent.GitHubAppID, "github_app_id", dep.Spec.Agent); ok {
+		ghAuthEnv = append(ghAuthEnv, envObj)
 	}
-	if dep.Spec.Agent.GitHubInstallID != "" {
-		ghAuthEnv = append(ghAuthEnv, K8sObject{"name": "GITHUB_APP_INSTALLATION_ID", "value": dep.Spec.Agent.GitHubInstallID})
+	if envObj, ok := resolveGitHubAppEnv("GITHUB_APP_INSTALLATION_ID", dep.Spec.Agent.GitHubInstallID, "github_app_installation_id", dep.Spec.Agent); ok {
+		ghAuthEnv = append(ghAuthEnv, envObj)
 	}
 	if repoName := extractRepoName(dep.Spec.Runner.GitHubConfigURL); repoName != "" {
 		ghAuthEnv = append(ghAuthEnv, K8sObject{"name": "GITHUB_REPO_NAME", "value": repoName})
@@ -487,6 +487,37 @@ func buildAutoscalingRunnerSet(
 		},
 		"spec": runnerSpec,
 	}
+}
+
+func resolveGitHubAppEnv(envName, inlineVal, key string, agent v1alpha1.AgentSpec) (K8sObject, bool) {
+	if inlineVal != "" {
+		return K8sObject{"name": envName, "value": inlineVal}, true
+	}
+	if agent.GitHubAppConfigMapRef != nil && agent.GitHubAppConfigMapRef.ConfigMapName != "" {
+		return K8sObject{
+			"name": envName,
+			"valueFrom": K8sObject{
+				"configMapKeyRef": K8sObject{
+					"name":     agent.GitHubAppConfigMapRef.ConfigMapName,
+					"key":      key,
+					"optional": true,
+				},
+			},
+		}, true
+	}
+	if agent.GitHubAppSecretRef != nil && agent.GitHubAppSecretRef.Name != "" {
+		return K8sObject{
+			"name": envName,
+			"valueFrom": K8sObject{
+				"secretKeyRef": K8sObject{
+					"name":     agent.GitHubAppSecretRef.Name,
+					"key":      key,
+					"optional": true,
+				},
+			},
+		}, true
+	}
+	return nil, false
 }
 
 func extractRepoName(configURL string) string {

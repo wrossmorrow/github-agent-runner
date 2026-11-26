@@ -204,3 +204,59 @@ func TestRenderToolchainMismatch(t *testing.T) {
 		t.Fatal("expected toolchain mismatch error")
 	}
 }
+
+func TestRenderGitHubAppEnvResolution(t *testing.T) {
+	findEnv := func(b *Bundle, name string) (K8sObject, bool) {
+		inits := b.AutoscalingRunnerSet["spec"].(K8sObject)["template"].(K8sObject)["spec"].(K8sObject)["initContainers"].([]K8sObject)
+		for _, ic := range inits {
+			if ic["name"] != "github-auth" {
+				continue
+			}
+			for _, e := range ic["env"].([]K8sObject) {
+				if e["name"] == name {
+					return e, true
+				}
+			}
+		}
+		return nil, false
+	}
+
+	t.Run("secret fallback when inline and configmap omitted", func(t *testing.T) {
+		dep, tc := sampleInputs()
+		dep.Spec.Agent.GitHubAppID = ""
+		dep.Spec.Agent.GitHubInstallID = ""
+
+		b, err := Render(dep, tc, Options{})
+		if err != nil {
+			t.Fatalf("Render failed: %v", err)
+		}
+		appIDEnv, ok := findEnv(b, "GITHUB_APP_ID")
+		if !ok {
+			t.Fatal("missing GITHUB_APP_ID")
+		}
+		secRef := appIDEnv["valueFrom"].(K8sObject)["secretKeyRef"].(K8sObject)
+		if secRef["name"] != "review-bot-key" || secRef["key"] != "github_app_id" || secRef["optional"] != true {
+			t.Fatalf("unexpected secretKeyRef: %#v", secRef)
+		}
+	})
+
+	t.Run("configmap takes precedence over secret fallback", func(t *testing.T) {
+		dep, tc := sampleInputs()
+		dep.Spec.Agent.GitHubAppID = ""
+		dep.Spec.Agent.GitHubInstallID = ""
+		dep.Spec.Agent.GitHubAppConfigMapRef = &v1alpha1.ConfigMapKeyRef{ConfigMapName: "review-bot-meta"}
+
+		b, err := Render(dep, tc, Options{})
+		if err != nil {
+			t.Fatalf("Render failed: %v", err)
+		}
+		installEnv, ok := findEnv(b, "GITHUB_APP_INSTALLATION_ID")
+		if !ok {
+			t.Fatal("missing GITHUB_APP_INSTALLATION_ID")
+		}
+		cmRef := installEnv["valueFrom"].(K8sObject)["configMapKeyRef"].(K8sObject)
+		if cmRef["name"] != "review-bot-meta" || cmRef["key"] != "github_app_installation_id" || cmRef["optional"] != true {
+			t.Fatalf("unexpected configMapKeyRef: %#v", cmRef)
+		}
+	})
+}

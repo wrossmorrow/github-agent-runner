@@ -84,16 +84,17 @@ type LocalRef struct {
 
 // AgentSpec configures the pi harness, model gateway, execution limits, and prompts.
 type AgentSpec struct {
-	Harness            string           `json:"harness,omitempty"`
-	Model              string           `json:"model"`
-	Provider           string           `json:"provider,omitempty"`
-	Gateway            GatewaySpec      `json:"gateway"`
-	Limits             LimitsSpec       `json:"limits,omitempty"`
-	SystemPromptRef    *ConfigMapKeyRef `json:"systemPromptRef,omitempty"`
-	AgentsMD           string           `json:"agentsMd,omitempty"`
-	GitHubAppSecretRef *SecretRef       `json:"githubAppSecretRef,omitempty"`
-	GitHubAppID        string           `json:"githubAppId,omitempty"`
-	GitHubInstallID    string           `json:"githubAppInstallationId,omitempty"`
+	Harness               string           `json:"harness,omitempty"`
+	Model                 string           `json:"model"`
+	Provider              string           `json:"provider,omitempty"`
+	Gateway               GatewaySpec      `json:"gateway"`
+	Limits                LimitsSpec       `json:"limits,omitempty"`
+	SystemPromptRef       *ConfigMapKeyRef `json:"systemPromptRef,omitempty"`
+	AgentsMD              string           `json:"agentsMd,omitempty"`
+	GitHubAppSecretRef    *SecretRef       `json:"githubAppSecretRef,omitempty"`
+	GitHubAppConfigMapRef *ConfigMapKeyRef `json:"githubAppConfigMapRef,omitempty"`
+	GitHubAppID           string           `json:"githubAppId,omitempty"`
+	GitHubInstallID       string           `json:"githubAppInstallationId,omitempty"`
 }
 
 // GatewaySpec points pi at an external Model Gateway / Agent Router.

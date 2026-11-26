@@ -124,6 +124,12 @@ spec:
                           type: string
                         key:
                           type: string
+                    githubAppConfigMapRef:
+                      type: object
+                      required: [configMapName]
+                      properties:
+                        configMapName:
+                          type: string
                     githubAppId:
                       type: string
                     githubAppInstallationId:
