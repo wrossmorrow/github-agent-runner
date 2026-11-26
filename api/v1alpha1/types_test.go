@@ -87,6 +87,16 @@ func TestDeploymentValidate(t *testing.T) {
 		t.Fatalf("expected valid deployment, got %v", err)
 	}
 
+	for _, mode := range []string{AgentModeReadOnly, AgentModeSuggest, AgentModeWriteBranch} {
+		obj := validDeployment()
+		obj.Spec.Agent.Mode = mode
+		obj.Spec.Agent.EgressAllowlist = []string{"staging.internal.example"}
+		obj.Spec.Runner.ServiceAccountName = "deploy-verifier.ro"
+		if err := obj.Validate(); err != nil {
+			t.Fatalf("expected valid deployment with mode %q, got %v", mode, err)
+		}
+	}
+
 	zeroRetries := 0
 	withZeroRetries := validDeployment()
 	withZeroRetries.Spec.Agent.Limits.MaxTransportRetries = &zeroRetries
@@ -175,6 +185,33 @@ func TestDeploymentValidate(t *testing.T) {
 				d.Spec.Agent.Limits.MaxTokens = 16384
 			},
 			wantErr: "maxTokens must be <=",
+		},
+		{
+			name:    "unsupported agent mode",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Agent.Mode = "autonomous" },
+			wantErr: "spec.agent.mode",
+		},
+		{
+			name: "invalid agent egressAllowlist",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.EgressAllowlist = []string{"https://staging.example.com/health"}
+			},
+			wantErr: "spec.agent.egressAllowlist",
+		},
+		{
+			name:    "invalid serviceAccountName with slash",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Runner.ServiceAccountName = "ns/sa" },
+			wantErr: "serviceAccountName",
+		},
+		{
+			name:    "invalid serviceAccountName uppercase and underscore",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Runner.ServiceAccountName = "Deploy_Verifier" },
+			wantErr: "serviceAccountName",
+		},
+		{
+			name:    "invalid serviceAccountName leading hyphen",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Runner.ServiceAccountName = "-bad" },
+			wantErr: "serviceAccountName",
 		},
 		{
 			name:    "negative maxTransportRetries",

@@ -83,7 +83,7 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 	if err := json.Unmarshal([]byte(agentData["config.json"]), &rtCfg); err != nil {
 		t.Fatalf("unmarshal config.json: %v", err)
 	}
-	if rtCfg.Model != "claude-sonnet-4-5" || rtCfg.GatewayEndpoint != "https://agent-gateway.internal:8443/v1" {
+	if rtCfg.Model != "claude-sonnet-4-5" || rtCfg.GatewayEndpoint != "https://agent-gateway.internal:8443/v1" || rtCfg.Mode != v1alpha1.AgentModeReadOnly {
 		t.Fatalf("unexpected runtime config: %+v", rtCfg)
 	}
 	if rtCfg.Limits.MaxTransportRetries == nil || *rtCfg.Limits.MaxTransportRetries != 3 {
@@ -118,6 +118,9 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 	podSpec := spec["template"].(K8sObject)["spec"].(K8sObject)
 	if podSpec["securityContext"].(K8sObject)["fsGroup"] != SharedFSGroup {
 		t.Fatalf("expected fsGroup %d", SharedFSGroup)
+	}
+	if _, hasSA := podSpec["serviceAccountName"]; hasSA {
+		t.Fatalf("expected serviceAccountName omitted when unset, got %v", podSpec["serviceAccountName"])
 	}
 
 	containers := podSpec["containers"].([]K8sObject)
@@ -157,6 +160,9 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 		if v, ok := e["value"].(string); ok {
 			agentEnv[e["name"].(string)] = v
 		}
+	}
+	if agentEnv["AGENTRUNNER_MODE"] != v1alpha1.AgentModeReadOnly {
+		t.Fatalf("AGENTRUNNER_MODE = %q, want %q", agentEnv["AGENTRUNNER_MODE"], v1alpha1.AgentModeReadOnly)
 	}
 	wantNoProxy := "localhost,127.0.0.1,::1,agent-gateway.internal"
 	if agentEnv["NO_PROXY"] != wantNoProxy || agentEnv["no_proxy"] != wantNoProxy {
@@ -278,4 +284,52 @@ func TestRenderGitHubAppEnvResolution(t *testing.T) {
 			t.Fatalf("unexpected configMapKeyRef: %#v", cmRef)
 		}
 	})
+}
+
+func TestRenderModeEgressAndServiceAccount(t *testing.T) {
+	dep, tc := sampleInputs()
+	dep.Spec.Agent.Mode = v1alpha1.AgentModeSuggest
+	dep.Spec.Agent.EgressAllowlist = []string{"staging.internal.example", "proxy.golang.org"}
+	dep.Spec.Runner.ServiceAccountName = "deploy-verifier-ro"
+
+	bundle, err := Render(dep, tc, Options{})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	var rtCfg AgentRuntimeConfig
+	agentData := bundle.AgentConfigMap["data"].(map[string]string)
+	if err := json.Unmarshal([]byte(agentData["config.json"]), &rtCfg); err != nil {
+		t.Fatalf("unmarshal config.json: %v", err)
+	}
+	if rtCfg.Mode != v1alpha1.AgentModeSuggest {
+		t.Fatalf("config.json mode = %q, want %q", rtCfg.Mode, v1alpha1.AgentModeSuggest)
+	}
+
+	squidConf := bundle.EgressConfigMap["data"].(map[string]string)["squid.conf"]
+	if !strings.Contains(squidConf, "acl allowed_domains dstdomain staging.internal.example\n") {
+		t.Fatalf("squid.conf missing deployment egress host:\n%s", squidConf)
+	}
+	if got := strings.Count(squidConf, "acl allowed_domains dstdomain proxy.golang.org\n"); got != 1 {
+		t.Fatalf("expected deduplicated proxy.golang.org ACL, got %d occurrences:\n%s", got, squidConf)
+	}
+
+	podSpec := bundle.AutoscalingRunnerSet["spec"].(K8sObject)["template"].(K8sObject)["spec"].(K8sObject)
+	if podSpec["serviceAccountName"] != "deploy-verifier-ro" {
+		t.Fatalf("serviceAccountName = %v, want deploy-verifier-ro", podSpec["serviceAccountName"])
+	}
+	var agentMode string
+	for _, ic := range podSpec["initContainers"].([]K8sObject) {
+		if ic["name"] != "agent" {
+			continue
+		}
+		for _, e := range ic["env"].([]K8sObject) {
+			if e["name"] == "AGENTRUNNER_MODE" {
+				agentMode, _ = e["value"].(string)
+			}
+		}
+	}
+	if agentMode != v1alpha1.AgentModeSuggest {
+		t.Fatalf("AGENTRUNNER_MODE = %q, want %q", agentMode, v1alpha1.AgentModeSuggest)
+	}
 }

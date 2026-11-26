@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wrossmorrow/agentrunner/api/v1alpha1"
 	"github.com/wrossmorrow/agentrunner/pkg/review"
 )
 
@@ -41,7 +42,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           newMux(runner),
+		Handler:           newMux(runner, cfg.Mode),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -55,7 +56,7 @@ func main() {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("agentrunnerd listening on %s (model=%s)", addr, cfg.Model)
+	log.Printf("agentrunnerd listening on %s (model=%s mode=%s)", addr, cfg.Model, cfg.Mode)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server failed: %v", err)
 	}
@@ -64,10 +65,14 @@ func main() {
 func loadConfig(path string) (review.Config, error) {
 	cfg := review.Config{
 		Harness:    "pi",
+		Mode:       v1alpha1.AgentModeReadOnly,
 		AgentsDirs: []string{"/opt/agents", "/etc/agentrunner/prompts", "/etc/agentrunner"},
 	}
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		if envMode := os.Getenv("AGENTRUNNER_MODE"); envMode != "" {
+			cfg.Mode = envMode
+		}
 		return cfg, nil
 	}
 	if err != nil {
@@ -76,19 +81,25 @@ func loadConfig(path string) (review.Config, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if cfg.Mode == "" {
+		cfg.Mode = v1alpha1.AgentModeReadOnly
+	}
+	if envMode := os.Getenv("AGENTRUNNER_MODE"); envMode != "" {
+		cfg.Mode = envMode
+	}
 	if len(cfg.AgentsDirs) == 0 {
 		cfg.AgentsDirs = []string{"/opt/agents", "/etc/agentrunner/prompts", "/etc/agentrunner"}
 	}
 	return cfg, nil
 }
 
-func newMux(exec reviewExecutor) http.Handler {
+func newMux(exec reviewExecutor, mode string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok\n")
 	})
-	mux.HandleFunc("POST /review", handleReview(exec))
+	mux.HandleFunc("POST /review", handleReview(exec, mode))
 	return mux
 }
 
@@ -101,8 +112,16 @@ type resultTrailer struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func handleReview(exec reviewExecutor) http.HandlerFunc {
+func handleReview(exec reviewExecutor, mode string) http.HandlerFunc {
+	effectiveMode := mode
+	if effectiveMode == "" {
+		effectiveMode = v1alpha1.AgentModeReadOnly
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		if effectiveMode != v1alpha1.AgentModeReadOnly {
+			http.Error(w, fmt.Sprintf("agent mode %q is not yet implemented (only %q is currently supported)", effectiveMode, v1alpha1.AgentModeReadOnly), http.StatusNotImplemented)
+			return
+		}
 		var req review.Request
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, fmt.Sprintf("invalid JSON request: %v", err), http.StatusBadRequest)

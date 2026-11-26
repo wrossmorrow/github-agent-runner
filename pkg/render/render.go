@@ -119,11 +119,19 @@ func (b *Bundle) List() K8sObject {
 // and read by agentrunnerd inside the agent sidecar.
 type AgentRuntimeConfig struct {
 	Harness         string              `json:"harness"`
+	Mode            string              `json:"mode,omitempty"`
 	Provider        string              `json:"provider,omitempty"`
 	Model           string              `json:"model"`
 	GatewayEndpoint string              `json:"gatewayEndpoint"`
 	Limits          v1alpha1.LimitsSpec `json:"limits,omitempty"`
 	Attribution     map[string]string   `json:"attributionHeaders,omitempty"`
+}
+
+func effectiveMode(dep *v1alpha1.AgenticRunnerDeployment) string {
+	if dep.Spec.Agent.Mode != "" {
+		return dep.Spec.Agent.Mode
+	}
+	return v1alpha1.AgentModeReadOnly
 }
 
 // Render validates dep and tc and builds the complete Kubernetes resource bundle.
@@ -176,6 +184,7 @@ func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Age
 	}
 	cfg := AgentRuntimeConfig{
 		Harness:         harness,
+		Mode:            effectiveMode(dep),
 		Provider:        dep.Spec.Agent.Provider,
 		Model:           dep.Spec.Agent.Model,
 		GatewayEndpoint: dep.Spec.Agent.Gateway.Endpoint,
@@ -233,6 +242,9 @@ func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Ag
 		addHost(h)
 	}
 	for _, h := range tc.Spec.EgressAllowlist {
+		addHost(h)
+	}
+	for _, h := range dep.Spec.Agent.EgressAllowlist {
 		addHost(h)
 	}
 
@@ -316,6 +328,7 @@ func buildAutoscalingRunnerSet(
 		},
 		{"name": "AGENTRUNNER_ADDR", "value": fmt.Sprintf("127.0.0.1:%d", opts.AgentRunnerPort)},
 		{"name": "AGENTRUNNER_CONFIG", "value": "/etc/agentrunner/config.json"},
+		{"name": "AGENTRUNNER_MODE", "value": effectiveMode(dep)},
 		{"name": "PI_CODING_AGENT_DIR", "value": "/home/node/.pi/agent"},
 	}
 
@@ -442,6 +455,31 @@ func buildAutoscalingRunnerSet(
 		ghAuthSidecar["env"] = ghAuthEnv
 	}
 
+	podSpec := K8sObject{
+		"securityContext": K8sObject{
+			"fsGroup": SharedFSGroup,
+		},
+		"initContainers": []K8sObject{
+			egressSidecar,
+			ghAuthSidecar,
+			agentSidecar,
+		},
+		"containers": []K8sObject{
+			{
+				"name":    "runner",
+				"image":   runnerImage,
+				"command": []string{"/home/runner/run.sh"},
+				"volumeMounts": []K8sObject{
+					{"name": "work", "mountPath": SharedWorkPath},
+				},
+			},
+		},
+		"volumes": volumes,
+	}
+	if sa := strings.TrimSpace(dep.Spec.Runner.ServiceAccountName); sa != "" {
+		podSpec["serviceAccountName"] = sa
+	}
+
 	runnerSpec := K8sObject{
 		"githubConfigUrl":    dep.Spec.Runner.GitHubConfigURL,
 		"runnerScaleSetName": dep.Spec.Runner.RunnerScaleSetName,
@@ -451,27 +489,7 @@ func buildAutoscalingRunnerSet(
 			"metadata": K8sObject{
 				"labels": commonLabels(dep),
 			},
-			"spec": K8sObject{
-				"securityContext": K8sObject{
-					"fsGroup": SharedFSGroup,
-				},
-				"initContainers": []K8sObject{
-					egressSidecar,
-					ghAuthSidecar,
-					agentSidecar,
-				},
-				"containers": []K8sObject{
-					{
-						"name":    "runner",
-						"image":   runnerImage,
-						"command": []string{"/home/runner/run.sh"},
-						"volumeMounts": []K8sObject{
-							{"name": "work", "mountPath": SharedWorkPath},
-						},
-					},
-				},
-				"volumes": volumes,
-			},
+			"spec": podSpec,
 		},
 	}
 	if dep.Spec.Runner.GitHubConfigSecret != "" {

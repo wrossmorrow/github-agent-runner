@@ -22,6 +22,9 @@ spec:
         - name: Toolchain
           type: string
           jsonPath: .spec.toolchainRef.name
+        - name: Mode
+          type: string
+          jsonPath: .spec.agent.mode
         - name: ScaleSet
           type: string
           jsonPath: .spec.runner.runnerScaleSetName
@@ -58,6 +61,8 @@ spec:
                       minimum: 0
                     runnerImage:
                       type: string
+                    serviceAccountName:
+                      type: string
                 toolchainRef:
                   type: object
                   required: [name]
@@ -71,6 +76,10 @@ spec:
                     harness:
                       type: string
                       enum: [pi]
+                    mode:
+                      type: string
+                      enum: [read-only, suggest, write-branch]
+                      default: read-only
                     model:
                       type: string
                     provider:
@@ -109,6 +118,10 @@ spec:
                         maxTransportRetries:
                           type: integer
                           minimum: 0
+                    egressAllowlist:
+                      type: array
+                      items:
+                        type: string
                     systemPromptRef:
                       type: object
                       required: [configMapName]
