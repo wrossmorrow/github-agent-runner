@@ -16,6 +16,7 @@ RUN os="${TARGETOS:-linux}" arch="${TARGETARCH:-$(go env GOARCH)}" \
     && printf '%s\n' "${meta}" | grep -q "GOARCH=${arch}"
 
 FROM gcr.io/distroless/static-debian12:nonroot
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=builder /agentrunner-controller /agentrunner-controller
 USER 65532:65532
 ENTRYPOINT ["/agentrunner-controller"]

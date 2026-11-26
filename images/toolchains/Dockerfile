@@ -45,6 +45,7 @@ RUN os="${TARGETOS:-linux}" arch="${TARGETARCH:-$(go env GOARCH)}" \
 
 # Main agent base container stage
 FROM node:${NODE_TAG} AS agent
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 ENV PAGER=cat GIT_PAGER=cat LESS=-FRX GIT_TERMINAL_PROMPT=0 DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
