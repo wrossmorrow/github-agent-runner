@@ -54,7 +54,7 @@ Low-risk agents that inspect code or logs inside an ephemeral toolchain containe
 ### Tier 2 — One-Click Suggestions (Still `Contents: Read`)
 
 #### F. Suggestion-Block Reviewer
-- **Example sketch (not yet implemented)**: [examples/future/suggest-fixes.yml](future/suggest-fixes.yml)
+- **Example workflow (implemented)**: [examples/future/suggest-fixes.yml](future/suggest-fixes.yml)
 - **Trigger**: `on: pull_request` or `on: issue_comment` (`/suggest`).
 - **How it works**: Runs linters/tests locally to verify a small fix (docstrings, missing unit test stubs, lint/vet fixes, typo corrections) and emits GitHub's native ```` ```suggestion ```` markdown blocks in inline PR review comments. A human maintainer clicks **Commit suggestion**—zero `Contents: Write` token exposure in the runner pod.
 
@@ -142,7 +142,7 @@ A full autonomous PR lifecycle (trigger → create PR → run CI & review → fi
 ## 4. Missing Pieces to Get There
 
 ### A. CRDs & Controller (`api/v1alpha1/`, `pkg/render/`, `pkg/controller/`)
-- **Task / capability modes** *(implemented in CRD & renderer; non-`read-only` runtime modes currently fail closed with `501` in `agentrunnerd` until Section B/C land)*: Declare allowed agent capabilities on `AgenticRunnerDeployment` (`spec.agent.mode: read-only | suggest | write-branch`) rather than assuming every deployment is a PR reviewer.
+- **Task / capability modes** *(implemented for `read-only` and `suggest`; `write-branch` returns `501` in `agentrunnerd` until Section C lands)*: Declare allowed agent capabilities on `AgenticRunnerDeployment` (`spec.agent.mode: read-only | suggest | write-branch`) rather than assuming every deployment is a PR reviewer.
 - **Rate limits & loop budgets**: CRD fields for `limits.maxIterationsPerPR`, `limits.cooldownSeconds`, and per-deployment concurrency/budget metadata forwarded to the gateway and `agentrunnerd`. (`limits.maxTransportRetries` is implemented for transient mid-stream errors.)
 - **Workspace & git write permissions**: For Tier 3 runners, align `/home/runner/_work` write/git-push ergonomics cleanly with `runner` UID `1001` and `agent` UID `1000` (today `agent` only needs read + `git diff` access).
 - **Workload Identity / read-only `ServiceAccount`** *(`spec.runner.serviceAccountName` implemented in CRD & renderer)*: Allows deployment pods (including ARC v2 runner/sidecar pods via `AutoscalingRunnerSet.spec.template.spec.serviceAccountName`) to hold narrowly scoped read-only Kubernetes/observability access via cloud Workload Identity without static secrets in GitHub Actions.
@@ -150,7 +150,7 @@ A full autonomous PR lifecycle (trigger → create PR → run CI & review → fi
 - **Per-deployment egress additions** *(`spec.agent.egressAllowlist` implemented in CRD & renderer)*: Appends deployment-specific domains (e.g., internal artifact registries, staging URLs, or issue trackers) on top of `AgenticRunnerToolchain.spec.egressAllowlist`.
 
 ### B. `agentrunnerd` & GitHub Action (`cmd/agentrunnerd/`, `pkg/review/`, `action/`)
-- **Generalized task endpoints/modes**: `POST /run` (with backwards-compatible `POST /review` alias) and multi-event hydration (`pull_request`, `issues`, `issue_comment`, `workflow_run`, `push` tags, `deployment_status`) are implemented alongside `pr-review`, `comment`, `issue-comment`, and `release-draft` publishers. Remaining planned outputs (`deployment-status`, `branch-commit`, `revert-pr`, `suggest`) return `501 Not Implemented`.
+- **Generalized task endpoints/modes**: `POST /run` (with backwards-compatible `POST /review` alias) and multi-event hydration (`pull_request`, `issues`, `issue_comment`, `workflow_run`, `push` tags, `deployment_status`) are implemented alongside `pr-review`, `suggest` (with ```` ```suggestion ```` blocks and multi-line ranges), `comment`, `issue-comment`, and `release-draft` publishers. Remaining planned outputs (`deployment-status`, `branch-commit`, `revert-pr`) return `501 Not Implemented`.
 - **Event hydration beyond `pull_request`**: Hydrate `deployment_status` payloads (resolving environment name, `environment_url`, target SHA, and previous successful deployment SHA) alongside `workflow_run` and `issues`.
 - **Git safety guardrails inside `agentrunnerd`**: Before committing/pushing in Tier 3 mode, reject dirty/unexpected target branches (never push to `main`/`master`) and reject diffs touching `.github/workflows/` or policy files.
 - **Richer Action outputs (`action/`)**: Upgrade `action/action.yml` from bash `curl` + `jq` to a small zero-dependency Node script (`index.mjs`) that writes structured `$GITHUB_OUTPUT` values (`verdict`, `summary`, `findings`, `pr-number`, `commit-sha`) and Markdown `$GITHUB_STEP_SUMMARY` tables cleanly.

@@ -82,7 +82,29 @@ func TestHealthAndReviewStreaming(t *testing.T) {
 }
 
 func TestUnsupportedModesReturn501(t *testing.T) {
-	for _, mode := range []string{v1alpha1.AgentModeSuggest, v1alpha1.AgentModeWriteBranch} {
+	t.Run("suggest mode allowed", func(t *testing.T) {
+		exec := &stubExecutor{
+			outcome: &review.Outcome{
+				ExitCode: 0,
+				Turns:    1,
+				Result:   &review.Result{Verdict: "APPROVE", Summary: "Looks good"},
+			},
+		}
+		mux := newMux(exec, v1alpha1.AgentModeSuggest)
+		body := strings.NewReader(`{"workspace":"/home/runner/_work/repo","instructions":"suggest fixes","output":"suggest"}`)
+		req := httptest.NewRequest(http.MethodPost, "/run", body)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("suggest status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if !exec.called {
+			t.Fatal("expected executor to run in suggest mode")
+		}
+	})
+
+	for _, mode := range []string{v1alpha1.AgentModeWriteBranch, "unknown-mode"} {
 		t.Run(mode, func(t *testing.T) {
 			exec := &stubExecutor{}
 			mux := newMux(exec, mode)
@@ -110,7 +132,6 @@ func TestOutputValidationOnRun(t *testing.T) {
 		{review.OutputDeploymentStatus, http.StatusNotImplemented},
 		{review.OutputBranchCommit, http.StatusNotImplemented},
 		{review.OutputRevertPR, http.StatusNotImplemented},
-		{review.OutputSuggest, http.StatusNotImplemented},
 		{"bogus-output", http.StatusBadRequest},
 	}
 

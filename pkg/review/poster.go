@@ -32,9 +32,9 @@ var ErrOutputNotImplemented = errors.New("output mode not yet implemented")
 // Planned future outputs wrap ErrOutputNotImplemented so callers can surface HTTP 501.
 func CheckOutputSupport(output string) error {
 	switch output {
-	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft:
+	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft, OutputSuggest:
 		return nil
-	case OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest:
+	case OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR:
 		return fmt.Errorf("%w: %q", ErrOutputNotImplemented, output)
 	default:
 		return fmt.Errorf("unsupported output mode %q", output)
@@ -96,7 +96,7 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 		args := []string{"pr", "comment", strconv.Itoa(req.PRNumber), "--repo", req.Repo, "--body", formatReviewMarkdown(res)}
 		_, err := runGH(ctx, ghBin, token, args, nil)
 		return err
-	case OutputPRReview:
+	case OutputPRReview, OutputSuggest:
 		if req.PRNumber <= 0 {
 			return fmt.Errorf("repo and prNumber are required to post output %q", req.Output)
 		}
@@ -251,7 +251,11 @@ func appendCommentSection(b *strings.Builder, heading string, comments []Comment
 	for _, c := range comments {
 		loc := "(general)"
 		if c.Path != "" && c.Line > 0 {
-			loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
+			if c.StartLine > 0 && c.StartLine < c.Line {
+				loc = fmt.Sprintf("%s:%d-%d", c.Path, c.StartLine, c.Line)
+			} else {
+				loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
+			}
 		} else if c.Path != "" {
 			loc = c.Path
 		}
@@ -351,8 +355,12 @@ func partitionComments(comments []Comment, validLines map[string]map[int]struct{
 		norm := normalizeCommentPath(c.Path)
 		c.Path = norm
 		if norm == "" || c.Line <= 0 {
+			c.StartLine = 0
 			offDiff = append(offDiff, c)
 			continue
+		}
+		if c.StartLine >= c.Line || c.StartLine < 0 {
+			c.StartLine = 0
 		}
 		if validLines != nil {
 			lines, ok := validLines[norm]
@@ -364,10 +372,42 @@ func partitionComments(comments []Comment, validLines map[string]map[int]struct{
 				offDiff = append(offDiff, c)
 				continue
 			}
+			if c.StartLine > 0 {
+				if _, ok := lines[c.StartLine]; !ok {
+					if c.Suggestion != "" {
+						// Multi-line suggestion range must remain intact; avoid narrowing it silently.
+						offDiff = append(offDiff, c)
+						continue
+					}
+					c.StartLine = 0
+				}
+			}
 		}
 		inline = append(inline, c)
 	}
 	return inline, offDiff
+}
+
+func fenceSuggestion(code string) string {
+	code = strings.TrimRight(code, "\r\n")
+	maxRun := 0
+	cur := 0
+	for _, r := range code {
+		if r == '`' {
+			cur++
+			if cur > maxRun {
+				maxRun = cur
+			}
+		} else {
+			cur = 0
+		}
+	}
+	fenceLen := 3
+	if maxRun >= 3 {
+		fenceLen = maxRun + 1
+	}
+	fence := strings.Repeat("`", fenceLen)
+	return fence + "suggestion\n" + code + "\n" + fence
 }
 
 func toGitHubComments(comments []Comment) []map[string]any {
@@ -376,12 +416,21 @@ func toGitHubComments(comments []Comment) []map[string]any {
 		if c.Path == "" || c.Line <= 0 {
 			continue
 		}
-		out = append(out, map[string]any{
+		body := fmt.Sprintf("[%s] %s", strings.ToUpper(c.Severity), c.Body)
+		if c.Suggestion != "" {
+			body += "\n\n" + fenceSuggestion(c.Suggestion)
+		}
+		entry := map[string]any{
 			"path": c.Path,
 			"line": c.Line,
 			"side": "RIGHT",
-			"body": fmt.Sprintf("[%s] %s", strings.ToUpper(c.Severity), c.Body),
-		})
+			"body": body,
+		}
+		if c.StartLine > 0 && c.StartLine < c.Line {
+			entry["start_line"] = c.StartLine
+			entry["start_side"] = "RIGHT"
+		}
+		out = append(out, entry)
 	}
 	return out
 }

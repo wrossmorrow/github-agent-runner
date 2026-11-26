@@ -75,9 +75,12 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		return nil, err
 	}
 	if agentsMD == "" {
-		if req.Output == OutputReleaseDraft {
+		switch {
+		case req.Output == OutputReleaseDraft:
 			agentsMD = DefaultReleaseNotesSystemPrompt
-		} else {
+		case r.Config.Mode == v1alpha1.AgentModeSuggest || req.Output == OutputSuggest:
+			agentsMD = DefaultSuggestSystemPrompt
+		default:
 			agentsMD = DefaultReviewerSystemPrompt
 		}
 	}

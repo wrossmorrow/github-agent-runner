@@ -165,12 +165,12 @@ exit 0
 }
 
 func TestCheckOutputSupport(t *testing.T) {
-	for _, okOut := range []string{"", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft} {
+	for _, okOut := range []string{"", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft, OutputSuggest} {
 		if err := CheckOutputSupport(okOut); err != nil {
 			t.Errorf("CheckOutputSupport(%q) unexpected error: %v", okOut, err)
 		}
 	}
-	for _, futureOut := range []string{OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest} {
+	for _, futureOut := range []string{OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR} {
 		err := CheckOutputSupport(futureOut)
 		if !errors.Is(err, ErrOutputNotImplemented) {
 			t.Errorf("CheckOutputSupport(%q) = %v, want ErrOutputNotImplemented", futureOut, err)
@@ -335,4 +335,68 @@ cat > "` + notesLog + `"
 			t.Fatalf("gh should not have been invoked for --help tag, stat err=%v", statErr)
 		}
 	})
+}
+
+func TestToGitHubCommentsSuggestions(t *testing.T) {
+	validLines := map[string]map[int]struct{}{
+		"pkg/a.go": {10: {}, 11: {}, 12: {}, 20: {}},
+	}
+	comments := []Comment{
+		{
+			Path:       "pkg/a.go",
+			Line:       20,
+			Severity:   "info",
+			Body:       "Add doc comment",
+			Suggestion: "// Foo bars.\nfunc Foo() {}",
+		},
+		{
+			Path:       "pkg/a.go",
+			StartLine:  10,
+			Line:       12,
+			Severity:   "warning",
+			Body:       "Simplify snippet",
+			Suggestion: "code := \"```go\\nhi\\n```\"",
+		},
+		{
+			Path:       "pkg/a.go",
+			StartLine:  5, // outside diff hunk
+			Line:       12,
+			Severity:   "warning",
+			Body:       "Off-hunk start line",
+			Suggestion: "fixed()",
+		},
+	}
+
+	inline, offDiff := partitionComments(comments, validLines)
+	if len(inline) != 2 || len(offDiff) != 1 {
+		t.Fatalf("expected 2 inline and 1 offDiff, got inline=%d offDiff=%d", len(inline), len(offDiff))
+	}
+	if offDiff[0].StartLine != 5 {
+		t.Fatalf("expected off-diff multi-line suggestion preserved cleanly, got %+v", offDiff[0])
+	}
+
+	ghComments := toGitHubComments(inline)
+	if len(ghComments) != 2 {
+		t.Fatalf("expected 2 GitHub comments, got %d", len(ghComments))
+	}
+
+	// Single-line suggestion has no start_line and uses ```suggestion fence.
+	c0 := ghComments[0]
+	if _, hasStart := c0["start_line"]; hasStart {
+		t.Fatalf("single-line suggestion should not set start_line: %+v", c0)
+	}
+	body0 := c0["body"].(string)
+	if !strings.Contains(body0, "```suggestion\n// Foo bars.\nfunc Foo() {}\n```") {
+		t.Fatalf("unexpected single-line suggestion body:\n%s", body0)
+	}
+
+	// Multi-line suggestion with embedded triple backticks uses 4-backtick fence and start_line/start_side.
+	c1 := ghComments[1]
+	if c1["start_line"] != 10 || c1["start_side"] != "RIGHT" || c1["line"] != 12 || c1["side"] != "RIGHT" {
+		t.Fatalf("unexpected multi-line range fields: %+v", c1)
+	}
+	body1 := c1["body"].(string)
+	if !strings.Contains(body1, "````suggestion\n") || !strings.HasSuffix(body1, "\n````") {
+		t.Fatalf("expected 4-backtick suggestion fence, got:\n%s", body1)
+	}
 }

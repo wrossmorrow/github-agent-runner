@@ -121,8 +121,10 @@ func handleRun(exec reviewExecutor, mode string) http.HandlerFunc {
 		effectiveMode = v1alpha1.AgentModeReadOnly
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if effectiveMode != v1alpha1.AgentModeReadOnly {
-			http.Error(w, fmt.Sprintf("agent mode %q is not yet implemented (only %q is currently supported)", effectiveMode, v1alpha1.AgentModeReadOnly), http.StatusNotImplemented)
+		switch effectiveMode {
+		case v1alpha1.AgentModeReadOnly, v1alpha1.AgentModeSuggest:
+		default:
+			http.Error(w, fmt.Sprintf("agent mode %q is not yet implemented", effectiveMode), http.StatusNotImplemented)
 			return
 		}
 		var req review.Request

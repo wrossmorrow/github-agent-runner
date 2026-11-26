@@ -8,7 +8,7 @@ inputs:
     description: Fail the step on severity (none | warning | error)
     default: error
   output:
-    description: Output target (pr-review | comment | issue-comment | release-draft | stdout)
+    description: Output target (pr-review | suggest | comment | issue-comment | release-draft | stdout)
     default: pr-review
   tag:
     description: Git tag name for release-draft output (defaults to GITHUB_REF_NAME on tag pushes)
