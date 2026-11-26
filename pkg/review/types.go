@@ -31,10 +31,12 @@ type Comment struct {
 	Body     string `json:"body"`
 }
 
-// Result is the structured JSON payload emitted by pi at the end of a review.
+// Result is the structured JSON payload emitted by pi at the end of a run.
 type Result struct {
 	Verdict  string    `json:"verdict"` // APPROVE | COMMENT | REQUEST_CHANGES
+	Title    string    `json:"title,omitempty"`
 	Summary  string    `json:"summary"`
+	Body     string    `json:"body,omitempty"`
 	Comments []Comment `json:"comments"`
 }
 
