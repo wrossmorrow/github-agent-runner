@@ -172,4 +172,10 @@ just sync-chart-crds          # copy config/crd/*.yaml into charts/agentrunner-c
 
 ---
 
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+
+---
+
 Built with Antigravity (Google DeepMind) using Gemini 4 Neon.

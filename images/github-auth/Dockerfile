@@ -1,5 +1,6 @@
 ARG ALPINE_TAG=3.22
 FROM alpine:${ALPINE_TAG}
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 RUN apk add --no-cache bash openssl curl jq \
     && adduser -D -u 1000 minter
