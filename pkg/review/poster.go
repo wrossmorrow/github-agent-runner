@@ -169,7 +169,7 @@ func (p *GhPoster) postReleaseDraft(ctx context.Context, ghBin, token string, re
 		return err
 	}
 
-	createArgs := []string{"release", "create", req.Tag, "--repo", req.Repo, "--draft", "--title", title, "--notes-file", "-"}
+	createArgs := []string{"release", "create", req.Tag, "--repo", req.Repo, "--draft", "--verify-tag", "--title", title, "--notes-file", "-"}
 	_, err := runGH(ctx, ghBin, token, createArgs, []byte(notes+"\n"))
 	return err
 }

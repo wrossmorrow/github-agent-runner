@@ -291,7 +291,7 @@ cat > "` + notesLog + `"
 			t.Fatalf("PostReview create draft failed: %v", err)
 		}
 		argsRaw, _ := os.ReadFile(argsLog)
-		if !strings.Contains(string(argsRaw), "release create v0.1.0 --repo org/repo --draft --title v0.1.0 --notes-file -") {
+		if !strings.Contains(string(argsRaw), "release create v0.1.0 --repo org/repo --draft --verify-tag --title v0.1.0 --notes-file -") {
 			t.Fatalf("unexpected gh create args: %q", string(argsRaw))
 		}
 		notesRaw, _ := os.ReadFile(notesLog)

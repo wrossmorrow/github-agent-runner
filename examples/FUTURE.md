@@ -38,7 +38,7 @@ Low-risk agents that inspect code or logs inside an ephemeral toolchain containe
 - **Output**: `pr-review` or `sarif` / `check-run` annotations.
 
 #### D. Release Notes Drafter
-- **Example sketch (not yet implemented)**: [examples/future/release-notes.yml](future/release-notes.yml)
+- **Example workflow (implemented)**: [examples/future/release-notes.yml](future/release-notes.yml)
 - **Trigger**: `on: push` (`tags: ['v*.*.*']`) or `workflow_dispatch`.
 - **How it works**: Inspects the full diff and PR metadata between the previous tag and the new tag (rather than just commit titles), verifies breaking changes or new CRD fields, and creates or updates a **draft** GitHub Release.
 - **Output**: `release-draft`.

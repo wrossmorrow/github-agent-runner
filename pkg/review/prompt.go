@@ -157,8 +157,8 @@ func firstMarkdownSummaryLine(md string) string {
 	for _, line := range strings.Split(md, "\n") {
 		line = strings.TrimSpace(strings.TrimLeft(line, "#-* "))
 		if line != "" {
-			if len(line) > 160 {
-				return line[:157] + "..."
+			if runes := []rune(line); len(runes) > 160 {
+				return string(runes[:157]) + "..."
 			}
 			return line
 		}
