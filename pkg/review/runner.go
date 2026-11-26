@@ -416,8 +416,9 @@ func resolvePreviousTag(ctx context.Context, workspace, currentTag string) strin
 		return ""
 	}
 	candidates := []string{"HEAD^"}
-	if currentTag != "" {
-		candidates = []string{currentTag + "^", "HEAD^"}
+	trimmedTag := strings.TrimSpace(currentTag)
+	if trimmedTag != "" && !strings.HasPrefix(trimmedTag, "-") && !strings.ContainsAny(trimmedTag, " \t\n\r") {
+		candidates = []string{trimmedTag + "^", "HEAD^"}
 	}
 	for _, ref := range candidates {
 		cmd := exec.CommandContext(ctx, "git", "-C", workspace, "describe", "--tags", "--abbrev=0", ref)

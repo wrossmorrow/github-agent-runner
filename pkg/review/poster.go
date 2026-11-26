@@ -137,13 +137,25 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 	}
 }
 
+func validateReleaseTag(tag string) (string, error) {
+	trimmed := strings.TrimSpace(tag)
+	if trimmed == "" {
+		return "", fmt.Errorf("tag is required to post output %q", OutputReleaseDraft)
+	}
+	if strings.HasPrefix(trimmed, "-") || strings.ContainsAny(trimmed, " \t\n\r") {
+		return "", fmt.Errorf("invalid release tag %q", tag)
+	}
+	return trimmed, nil
+}
+
 func (p *GhPoster) postReleaseDraft(ctx context.Context, ghBin, token string, req Request, res *Result) error {
-	if strings.TrimSpace(req.Tag) == "" {
-		return fmt.Errorf("tag is required to post output %q", req.Output)
+	tag, err := validateReleaseTag(req.Tag)
+	if err != nil {
+		return err
 	}
 	title := strings.TrimSpace(res.Title)
 	if title == "" {
-		title = req.Tag
+		title = tag
 	}
 	notes := strings.TrimSpace(res.Body)
 	if notes == "" {
@@ -153,24 +165,24 @@ func (p *GhPoster) postReleaseDraft(ctx context.Context, ghBin, token string, re
 		notes = formatReviewMarkdown(res)
 	}
 
-	viewArgs := []string{"release", "view", req.Tag, "--repo", req.Repo, "--json", "isDraft"}
+	viewArgs := []string{"release", "view", tag, "--repo", req.Repo, "--json", "isDraft"}
 	if out, err := runGH(ctx, ghBin, token, viewArgs, nil); err == nil {
 		var info struct {
 			IsDraft bool `json:"isDraft"`
 		}
 		if jerr := json.Unmarshal(out, &info); jerr != nil {
-			return fmt.Errorf("parsing release view response for %q: %w", req.Tag, jerr)
+			return fmt.Errorf("parsing release view response for %q: %w", tag, jerr)
 		}
 		if !info.IsDraft {
-			return fmt.Errorf("refusing to overwrite published release %q", req.Tag)
+			return fmt.Errorf("refusing to overwrite published release %q", tag)
 		}
-		editArgs := []string{"release", "edit", req.Tag, "--repo", req.Repo, "--draft", "--title", title, "--notes-file", "-"}
+		editArgs := []string{"release", "edit", tag, "--repo", req.Repo, "--draft", "--title", title, "--notes-file", "-"}
 		_, err = runGH(ctx, ghBin, token, editArgs, []byte(notes+"\n"))
 		return err
 	}
 
-	createArgs := []string{"release", "create", req.Tag, "--repo", req.Repo, "--draft", "--verify-tag", "--title", title, "--notes-file", "-"}
-	_, err := runGH(ctx, ghBin, token, createArgs, []byte(notes+"\n"))
+	createArgs := []string{"release", "create", tag, "--repo", req.Repo, "--draft", "--verify-tag", "--title", title, "--notes-file", "-"}
+	_, err = runGH(ctx, ghBin, token, createArgs, []byte(notes+"\n"))
 	return err
 }
 

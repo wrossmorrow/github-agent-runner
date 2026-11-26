@@ -32,6 +32,8 @@ on:
         required: true
         type: string
 
+# GITHUB_TOKEN only needs read for checkout; the `release-bot` GitHub App
+# mounted via github-auth mints the `Contents: Read & write` token for drafts.
 permissions:
   contents: read
 

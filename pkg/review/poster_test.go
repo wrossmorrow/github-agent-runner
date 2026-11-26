@@ -324,4 +324,15 @@ cat > "` + notesLog + `"
 			t.Fatalf("should not call edit or create on published release: %q", string(argsRaw))
 		}
 	})
+
+	t.Run("rejects leading-dash tag before invoking gh", func(t *testing.T) {
+		_ = os.Remove(argsLog)
+		err := poster.PostReview(context.Background(), Request{Repo: "org/repo", Tag: "--help", Output: OutputReleaseDraft}, res)
+		if err == nil || !strings.Contains(err.Error(), "invalid release tag") {
+			t.Fatalf("expected invalid release tag error, got %v", err)
+		}
+		if _, statErr := os.Stat(argsLog); !os.IsNotExist(statErr) {
+			t.Fatalf("gh should not have been invoked for --help tag, stat err=%v", statErr)
+		}
+	})
 }
