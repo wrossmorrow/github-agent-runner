@@ -20,6 +20,8 @@ const (
 	defaultMaxTransportRetries = 2
 	defaultRetryBackoff        = 2 * time.Second
 
+	transientRetryPrompt = "The previous response was interrupted by a transient network/socket error. Continue where you left off and finish the review."
+
 	formatNudgePrompt = `Your previous response did not contain a valid JSON review object.
 Do not run any more tools. Respond with ONLY a single valid JSON object matching:
 {"verdict":"APPROVE"|"COMMENT"|"REQUEST_CHANGES","summary":"concise summary","comments":[{"path":"relative/path","line":1,"severity":"info"|"warning"|"error","body":"comment"}]}`
@@ -127,17 +129,17 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	turns := 0
 	finalText, err := sendPromptWithTransportRetries(
-		ctx, client, events, userPrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
+		ctx, client, events, userPrompt, transientRetryPrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	reviewRes, err := ExtractReviewResult(finalText)
-	if err != nil && ctx.Err() == nil && (r.Config.Limits.MaxTurns == 0 || turns < r.Config.Limits.MaxTurns) {
+	if err != nil && ctx.Err() == nil && (r.Config.Limits.MaxTurns <= 0 || turns < r.Config.Limits.MaxTurns) {
 		_, _ = fmt.Fprintln(logOut, "agentrunner: assistant output missing valid review JSON; nudging once in-session...")
 		nudgeText, nudgeErr := sendPromptWithTransportRetries(
-			ctx, client, events, formatNudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
+			ctx, client, events, formatNudgePrompt, formatNudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
 		)
 		if nudgeErr != nil {
 			return nil, nudgeErr
@@ -179,6 +181,7 @@ func sendPromptWithTransportRetries(
 	client *pirpc.Client,
 	events <-chan pirpc.Event,
 	initialMsg string,
+	retryMsg string,
 	systemPrompt string,
 	maxRetries int,
 	backoff time.Duration,
@@ -189,7 +192,7 @@ func sendPromptWithTransportRetries(
 	for attempt := 0; ; attempt++ {
 		msg := initialMsg
 		if attempt > 0 {
-			msg = "The previous response was interrupted by a transient network/socket error. Continue where you left off and finish the review."
+			msg = retryMsg
 		}
 		promptCmd := map[string]any{
 			"type":         "prompt",
@@ -222,7 +225,7 @@ func sendPromptWithTransportRetries(
 		canRetry := attempt < maxRetries &&
 			ctx.Err() == nil &&
 			isTransientTransportError(err) &&
-			(maxTurns == 0 || *turns < maxTurns)
+			(maxTurns <= 0 || *turns < maxTurns)
 		if !canRetry {
 			return "", err
 		}
