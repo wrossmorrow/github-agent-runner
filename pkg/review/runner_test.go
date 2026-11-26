@@ -32,7 +32,73 @@ func TestHelperPiReview(t *testing.T) {
 			continue
 		}
 		promptCount++
+		if mode == "pi_auto_retry_during_backoff" && promptCount > 1 {
+			_ = enc.Encode(map[string]any{"type": "response", "id": cmd["id"], "success": false, "error": "unexpected duplicate prompt"})
+			continue
+		}
+		if mode == "already_processing_then_followup" && promptCount > 1 {
+			if cmd["streamingBehavior"] != "followUp" {
+				_ = enc.Encode(map[string]any{"type": "response", "id": cmd["id"], "success": false, "error": "Agent is already processing"})
+				continue
+			}
+			_ = enc.Encode(map[string]any{"type": "response", "id": cmd["id"], "success": true})
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":    "assistant",
+						"content": `{"verdict":"APPROVE","summary":"Recovered via followUp","comments":[]}`,
+					},
+				},
+			})
+			continue
+		}
 		_ = enc.Encode(map[string]any{"type": "response", "id": cmd["id"], "success": true})
+
+		if mode == "pi_auto_retry_during_backoff" && promptCount == 1 {
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":         "assistant",
+						"stopReason":   "error",
+						"errorMessage": "UND_ERR_SOCKET: other side closed",
+						"content":      []any{},
+					},
+				},
+			})
+			time.Sleep(10 * time.Millisecond)
+			_ = enc.Encode(map[string]any{"type": "auto_retry_start"})
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":    "assistant",
+						"content": `{"verdict":"APPROVE","summary":"Pi auto-retried","comments":[]}`,
+					},
+				},
+			})
+			continue
+		}
+
+		if mode == "already_processing_then_followup" && promptCount == 1 {
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":         "assistant",
+						"stopReason":   "error",
+						"errorMessage": "UND_ERR_SOCKET: other side closed",
+						"content":      []any{},
+					},
+				},
+			})
+			continue
+		}
 
 		if mode == "too_many_turns" {
 			for i := 0; i < 5; i++ {
@@ -449,6 +515,75 @@ func TestRunnerFormatNudge(t *testing.T) {
 			t.Fatalf("expected JSON parse error without exceeding MaxTurns=1, got %v", err)
 		}
 	})
+}
+
+func TestRunnerTransportRetryRaceRecovery(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name        string
+		helperMode  string
+		backoff     time.Duration
+		wantSummary string
+		wantLog     string
+	}{
+		{
+			name:        "awaits pi internal auto_retry_start during backoff",
+			helperMode:  "pi_auto_retry_during_backoff",
+			backoff:     500 * time.Millisecond,
+			wantSummary: "Pi auto-retried",
+			wantLog:     "pi became active during backoff (auto_retry_start)",
+		},
+		{
+			name:        "falls back to streamingBehavior=followUp when pi still processing",
+			helperMode:  "already_processing_then_followup",
+			backoff:     time.Millisecond,
+			wantSummary: "Recovered via followUp",
+			wantLog:     "streamingBehavior=followUp",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GO_WANT_REVIEW_HELPER", "1")
+			t.Setenv("HELPER_MODE", tc.helperMode)
+
+			poster := &mockPoster{}
+			runner := &Runner{
+				Config: Config{
+					PiBin:  exe,
+					PiArgs: []string{"-test.run=TestHelperPiReview"},
+					Limits: v1alpha1.LimitsSpec{MaxTurns: 5, MaxDuration: "5s"},
+				},
+				Poster:       poster,
+				RetryBackoff: tc.backoff,
+			}
+
+			var logs bytes.Buffer
+			outcome, err := runner.Run(context.Background(), Request{
+				Workspace:    t.TempDir(),
+				Instructions: "Check everything",
+				Output:       "pr-review",
+				Repo:         "org/repo",
+				PRNumber:     11,
+			}, &logs)
+			if err != nil {
+				t.Fatalf("Run(%s) failed: %v\nlogs:\n%s", tc.helperMode, err, logs.String())
+			}
+			if outcome.Result.Verdict != "APPROVE" || outcome.Result.Summary != tc.wantSummary {
+				t.Fatalf("unexpected outcome: %+v", outcome.Result)
+			}
+			if !poster.called {
+				t.Fatal("expected poster to be called after recovery")
+			}
+			if !strings.Contains(logs.String(), tc.wantLog) {
+				t.Fatalf("expected log substring %q, got:\n%s", tc.wantLog, logs.String())
+			}
+		})
+	}
 }
 
 func TestRunnerReleaseDraftMarkdown(t *testing.T) {
