@@ -83,7 +83,7 @@ func HydrateFromEvent(req Request) Request {
 		req.PRNumber = payload.Issue.Number
 	}
 
-	// workflow_run event
+	// workflow_run event (uses PullRequests[0] first-PR-wins when multiple PRs are attached)
 	if req.WorkflowRunID == 0 {
 		req.WorkflowRunID = payload.WorkflowRun.ID
 	}
