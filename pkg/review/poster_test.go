@@ -198,24 +198,49 @@ printf '%s\n' "$*" > "` + argsFile + `"
 	}
 
 	poster := &GhPoster{TokenFile: tokenFile, GHBin: ghScript}
-	err := poster.PostReview(context.Background(), Request{
-		Repo:        "org/repo",
-		IssueNumber: 88,
-		Output:      OutputIssueComment,
-	}, &Result{
-		Verdict: "COMMENT",
-		Summary: "Reproduced bug locally.",
-	})
-	if err != nil {
-		t.Fatalf("PostReview issue-comment failed: %v", err)
+	cases := []struct {
+		name string
+		req  Request
+		want string
+	}{
+		{
+			name: "explicit IssueNumber",
+			req: Request{
+				Repo:        "org/repo",
+				IssueNumber: 88,
+				Output:      OutputIssueComment,
+			},
+			want: "issue comment 88 --repo org/repo",
+		},
+		{
+			name: "PRNumber fallback when IssueNumber unset",
+			req: Request{
+				Repo:     "org/repo",
+				PRNumber: 42,
+				Output:   OutputIssueComment,
+			},
+			want: "issue comment 42 --repo org/repo",
+		},
 	}
 
-	raw, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(raw)
-	if !strings.Contains(got, "issue comment 88 --repo org/repo") {
-		t.Fatalf("expected gh issue comment invocation, got %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := poster.PostReview(context.Background(), tc.req, &Result{
+				Verdict: "COMMENT",
+				Summary: "Reproduced bug locally.",
+			})
+			if err != nil {
+				t.Fatalf("PostReview issue-comment failed: %v", err)
+			}
+
+			raw, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(raw)
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
 	}
 }
