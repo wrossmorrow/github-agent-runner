@@ -32,9 +32,9 @@ var ErrOutputNotImplemented = errors.New("output mode not yet implemented")
 // Planned future outputs wrap ErrOutputNotImplemented so callers can surface HTTP 501.
 func CheckOutputSupport(output string) error {
 	switch output {
-	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft:
+	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft, OutputSuggest:
 		return nil
-	case OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR, OutputSuggest:
+	case OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR:
 		return fmt.Errorf("%w: %q", ErrOutputNotImplemented, output)
 	default:
 		return fmt.Errorf("unsupported output mode %q", output)
@@ -96,7 +96,7 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 		args := []string{"pr", "comment", strconv.Itoa(req.PRNumber), "--repo", req.Repo, "--body", formatReviewMarkdown(res)}
 		_, err := runGH(ctx, ghBin, token, args, nil)
 		return err
-	case OutputPRReview:
+	case OutputPRReview, OutputSuggest:
 		if req.PRNumber <= 0 {
 			return fmt.Errorf("repo and prNumber are required to post output %q", req.Output)
 		}
@@ -251,11 +251,20 @@ func appendCommentSection(b *strings.Builder, heading string, comments []Comment
 	for _, c := range comments {
 		loc := "(general)"
 		if c.Path != "" && c.Line > 0 {
-			loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
+			if c.StartLine > 0 && c.StartLine < c.Line {
+				loc = fmt.Sprintf("%s:%d-%d", c.Path, c.StartLine, c.Line)
+			} else {
+				loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
+			}
 		} else if c.Path != "" {
 			loc = c.Path
 		}
 		fmt.Fprintf(b, "- `[%s]` `%s`: %s\n", strings.ToUpper(c.Severity), loc, c.Body)
+		if c.Suggestion != "" {
+			for _, line := range strings.Split(fenceCodeBlock("", c.Suggestion), "\n") {
+				fmt.Fprintf(b, "  %s\n", line)
+			}
+		}
 	}
 }
 
@@ -276,7 +285,7 @@ func normalizeCommentPath(p string) string {
 	return cleaned
 }
 
-func loadPRDiffLines(ctx context.Context, workspace, baseRef string) map[string]map[int]struct{} {
+func loadPRDiffLines(ctx context.Context, workspace, baseRef string) map[string]map[int]int {
 	if strings.TrimSpace(workspace) == "" || strings.TrimSpace(baseRef) == "" {
 		return nil
 	}
@@ -289,10 +298,11 @@ func loadPRDiffLines(ctx context.Context, workspace, baseRef string) map[string]
 	return nil
 }
 
-func parseDiffLines(diffText string) map[string]map[int]struct{} {
-	result := map[string]map[int]struct{}{}
+func parseDiffLines(diffText string) map[string]map[int]int {
+	result := map[string]map[int]int{}
 	var currentFile string
 	newLine := 0
+	hunkID := 0
 	inHunk := false
 
 	for _, line := range strings.Split(diffText, "\n") {
@@ -305,11 +315,12 @@ func parseDiffLines(diffText string) map[string]map[int]struct{} {
 		case !inHunk && strings.HasPrefix(line, "+++ b/"):
 			currentFile = normalizeCommentPath(strings.TrimPrefix(line, "+++ b/"))
 			if currentFile != "" && result[currentFile] == nil {
-				result[currentFile] = map[int]struct{}{}
+				result[currentFile] = map[int]int{}
 			}
 		case strings.HasPrefix(line, "@@ "):
 			if start, ok := parseHunkNewStart(line); ok {
 				newLine = start
+				hunkID++
 				inHunk = true
 			}
 		case inHunk && currentFile != "":
@@ -318,7 +329,7 @@ func parseDiffLines(diffText string) map[string]map[int]struct{} {
 			}
 			switch line[0] {
 			case ' ', '+':
-				result[currentFile][newLine] = struct{}{}
+				result[currentFile][newLine] = hunkID
 				newLine++
 			case '-', '\\':
 			default:
@@ -346,13 +357,23 @@ func parseHunkNewStart(line string) (int, bool) {
 	return n, true
 }
 
-func partitionComments(comments []Comment, validLines map[string]map[int]struct{}) (inline []Comment, offDiff []Comment) {
+func partitionComments(comments []Comment, validLines map[string]map[int]int) (inline []Comment, offDiff []Comment) {
 	for _, c := range comments {
 		norm := normalizeCommentPath(c.Path)
 		c.Path = norm
 		if norm == "" || c.Line <= 0 {
+			c.StartLine = 0
 			offDiff = append(offDiff, c)
 			continue
+		}
+		if c.StartLine == c.Line {
+			c.StartLine = 0
+		} else if c.StartLine > c.Line || c.StartLine < 0 {
+			if c.Suggestion != "" {
+				offDiff = append(offDiff, c)
+				continue
+			}
+			c.StartLine = 0
 		}
 		if validLines != nil {
 			lines, ok := validLines[norm]
@@ -360,14 +381,51 @@ func partitionComments(comments []Comment, validLines map[string]map[int]struct{
 				offDiff = append(offDiff, c)
 				continue
 			}
-			if _, ok := lines[c.Line]; !ok {
+			endHunk, ok := lines[c.Line]
+			if !ok {
 				offDiff = append(offDiff, c)
 				continue
+			}
+			if c.StartLine > 0 {
+				if startHunk, ok := lines[c.StartLine]; !ok || startHunk != endHunk {
+					if c.Suggestion != "" {
+						// Multi-line suggestions must stay within one diff hunk and remain intact.
+						offDiff = append(offDiff, c)
+						continue
+					}
+					c.StartLine = 0
+				}
 			}
 		}
 		inline = append(inline, c)
 	}
 	return inline, offDiff
+}
+
+func fenceSuggestion(code string) string {
+	return fenceCodeBlock("suggestion", code)
+}
+
+func fenceCodeBlock(lang, code string) string {
+	code = strings.TrimRight(code, "\r\n")
+	maxRun := 0
+	cur := 0
+	for _, r := range code {
+		if r == '`' {
+			cur++
+			if cur > maxRun {
+				maxRun = cur
+			}
+		} else {
+			cur = 0
+		}
+	}
+	fenceLen := 3
+	if maxRun >= 3 {
+		fenceLen = maxRun + 1
+	}
+	fence := strings.Repeat("`", fenceLen)
+	return fence + lang + "\n" + code + "\n" + fence
 }
 
 func toGitHubComments(comments []Comment) []map[string]any {
@@ -376,12 +434,21 @@ func toGitHubComments(comments []Comment) []map[string]any {
 		if c.Path == "" || c.Line <= 0 {
 			continue
 		}
-		out = append(out, map[string]any{
+		body := fmt.Sprintf("[%s] %s", strings.ToUpper(c.Severity), c.Body)
+		if c.Suggestion != "" {
+			body += "\n\n" + fenceSuggestion(c.Suggestion)
+		}
+		entry := map[string]any{
 			"path": c.Path,
 			"line": c.Line,
 			"side": "RIGHT",
-			"body": fmt.Sprintf("[%s] %s", strings.ToUpper(c.Severity), c.Body),
-		})
+			"body": body,
+		}
+		if c.StartLine > 0 && c.StartLine < c.Line {
+			entry["start_line"] = c.StartLine
+			entry["start_side"] = "RIGHT"
+		}
+		out = append(out, entry)
 	}
 	return out
 }

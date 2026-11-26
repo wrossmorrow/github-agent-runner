@@ -25,10 +25,12 @@ type Request struct {
 
 // Comment represents an inline review finding returned by pi.
 type Comment struct {
-	Path     string `json:"path"`
-	Line     int    `json:"line"`
-	Severity string `json:"severity"` // info | warning | error
-	Body     string `json:"body"`
+	Path       string `json:"path"`
+	StartLine  int    `json:"startLine,omitempty"`
+	Line       int    `json:"line"`
+	Severity   string `json:"severity"` // info | warning | error
+	Body       string `json:"body"`
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 // Result is the structured JSON payload emitted by pi at the end of a run.

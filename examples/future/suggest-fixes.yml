@@ -1,5 +1,5 @@
 # =============================================================================
-# STATUS: FUTURE / NOT YET IMPLEMENTED (see examples/FUTURE.md)
+# STATUS: IMPLEMENTED (v0.0.8+) (see examples/FUTURE.md)
 #
 # TIER & PURPOSE:
 #   Tier 2 (Suggest-Only, Still Contents: Read) — Suggestion-Block Reviewer.
@@ -12,17 +12,18 @@
 #   - Contents: Read-only
 #   - Pull requests: Read & write
 #
-# MISSING IN AGENTRUNNER TODAY:
-#   - `suggestion` / `endLine` fields on `review.Comment` in pkg/review/types.go
-#     and multi-line range formatting (`start_line`, `line`, `side: RIGHT`) in
-#     pkg/review/poster.go.
-#   - Rendering ```suggestion``` fenced blocks in inline review comment bodies.
+# SETUP NOTES:
+#   - Configure the deployment with `spec.agent.mode: suggest` (or use
+#     `output: suggest` / `output: pr-review` with suggestion comments).
 # =============================================================================
 
-name: Agentic Suggestions (Future)
+name: Agentic Suggestions
 
 on:
   pull_request:
+
+permissions:
+  contents: read
 
 concurrency:
   group: agent-suggest-${{ github.event.pull_request.number }}
@@ -31,10 +32,12 @@ concurrency:
 jobs:
   suggest-fixes:
     runs-on: agentic-go-review
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: wrossmorrow/github-agent-runner/action@vx.y.z
         with:
@@ -44,4 +47,4 @@ jobs:
             gofmt/vet issues, trivial nil checks), include exact single- or multi-line
             replacement code as a suggestion block. Verify any proposed change compiles.
           fail-on: warning
-          output: pr-review
+          output: suggest
