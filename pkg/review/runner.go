@@ -19,6 +19,12 @@ import (
 const (
 	defaultMaxTransportRetries = 2
 	defaultRetryBackoff        = 2 * time.Second
+
+	transientRetryPrompt = "The previous response was interrupted by a transient network/socket error. Continue where you left off and finish the review."
+
+	formatNudgePrompt = `Your previous response did not contain a valid JSON review object.
+Do not run any more tools. Respond with ONLY a single valid JSON object matching:
+{"verdict":"APPROVE"|"COMMENT"|"REQUEST_CHANGES","summary":"concise summary","comments":[{"path":"relative/path","line":1,"severity":"info"|"warning"|"error","body":"comment"}]}`
 )
 
 // Config holds runtime settings loaded by agentrunnerd from /etc/agentrunner/config.json.
@@ -121,65 +127,26 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		backoff = defaultRetryBackoff
 	}
 
-	var finalText string
 	turns := 0
-	for attempt := 0; ; attempt++ {
-		promptCmd := map[string]any{
-			"type":         "prompt",
-			"message":      userPrompt,
-			"systemPrompt": agentsMD,
-		}
-		if attempt > 0 {
-			promptCmd = map[string]any{
-				"type":         "prompt",
-				"message":      "The previous response was interrupted by a transient network/socket error. Continue where you left off and finish the review.",
-				"systemPrompt": agentsMD,
-			}
-		}
-
-		res, err := client.Send(ctx, promptCmd)
-		if err != nil {
-			return nil, fmt.Errorf("sending prompt: %w", err)
-		}
-		if !res.Success {
-			return nil, fmt.Errorf("prompt rejected: %s", res.Error)
-		}
-
-		remainingTurns := 0
-		if r.Config.Limits.MaxTurns > 0 {
-			remainingTurns = r.Config.Limits.MaxTurns - turns
-			if remainingTurns <= 0 {
-				remainingTurns = 1
-			}
-		}
-
-		attemptText, attemptTurns, err := streamUntilEnd(ctx, events, remainingTurns, client, logOut)
-		turns += attemptTurns
-		if err == nil {
-			finalText = attemptText
-			break
-		}
-
-		canRetry := attempt < maxRetries &&
-			ctx.Err() == nil &&
-			isTransientTransportError(err) &&
-			(r.Config.Limits.MaxTurns == 0 || turns < r.Config.Limits.MaxTurns)
-		if !canRetry {
-			return nil, err
-		}
-
-		delay := backoff * time.Duration(attempt+1)
-		_, _ = fmt.Fprintf(logOut, "transient model transport error (%v); retrying in-session (%d/%d) after %s...\n", err, attempt+1, maxRetries, delay)
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
+	finalText, err := sendPromptWithTransportRetries(
+		ctx, client, events, userPrompt, transientRetryPrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	reviewRes, err := ExtractReviewResult(finalText)
+	if err != nil && ctx.Err() == nil && (r.Config.Limits.MaxTurns <= 0 || turns < r.Config.Limits.MaxTurns) {
+		_, _ = fmt.Fprintln(logOut, "agentrunner: assistant output missing valid review JSON; nudging once in-session...")
+		nudgeText, nudgeErr := sendPromptWithTransportRetries(
+			ctx, client, events, formatNudgePrompt, formatNudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
+		)
+		if nudgeErr != nil {
+			return nil, nudgeErr
+		}
+		finalText = nudgeText
+		reviewRes, err = ExtractReviewResult(finalText)
+	}
 	if err != nil {
 		preview := strings.TrimSpace(finalText)
 		if preview == "" {
@@ -207,6 +174,72 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		ExitCode: exitCode,
 		Turns:    turns,
 	}, nil
+}
+
+func sendPromptWithTransportRetries(
+	ctx context.Context,
+	client *pirpc.Client,
+	events <-chan pirpc.Event,
+	initialMsg string,
+	retryMsg string,
+	systemPrompt string,
+	maxRetries int,
+	backoff time.Duration,
+	maxTurns int,
+	turns *int,
+	logOut io.Writer,
+) (string, error) {
+	for attempt := 0; ; attempt++ {
+		msg := initialMsg
+		if attempt > 0 {
+			msg = retryMsg
+		}
+		promptCmd := map[string]any{
+			"type":         "prompt",
+			"message":      msg,
+			"systemPrompt": systemPrompt,
+		}
+
+		res, err := client.Send(ctx, promptCmd)
+		if err != nil {
+			return "", fmt.Errorf("sending prompt: %w", err)
+		}
+		if !res.Success {
+			return "", fmt.Errorf("prompt rejected: %s", res.Error)
+		}
+
+		remainingTurns := 0
+		if maxTurns > 0 {
+			remainingTurns = maxTurns - *turns
+			if remainingTurns <= 0 {
+				remainingTurns = 1
+			}
+		}
+
+		attemptText, attemptTurns, err := streamUntilEnd(ctx, events, remainingTurns, client, logOut)
+		*turns += attemptTurns
+		if err == nil {
+			return attemptText, nil
+		}
+
+		canRetry := attempt < maxRetries &&
+			ctx.Err() == nil &&
+			isTransientTransportError(err) &&
+			(maxTurns <= 0 || *turns < maxTurns)
+		if !canRetry {
+			return "", err
+		}
+
+		delay := backoff * time.Duration(attempt+1)
+		_, _ = fmt.Fprintf(logOut, "transient model transport error (%v); retrying in-session (%d/%d) after %s...\n", err, attempt+1, maxRetries, delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func streamUntilEnd(
