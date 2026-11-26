@@ -112,19 +112,30 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		BlockOwnerDeletion: boolPtr(true),
 	}
 
-	for _, obj := range bundle.Objects() {
-		u := &unstructured.Unstructured{Object: deepCopyMap(obj)}
-		u.SetOwnerReferences([]metav1.OwnerReference{ownerRef})
-		if err := r.applyObject(ctx, u); err != nil {
-			_ = r.updateStatus(ctx, depObj, tc.Spec.Image, opts.ARCVersion, dep.Spec.Runner.RunnerScaleSetName, "False", "ApplyFailed", err.Error())
-			return ctrl.Result{}, fmt.Errorf("applying %s/%s: %w", u.GetKind(), u.GetName(), err)
-		}
-	}
-
 	resolvedARC := opts.ARCVersion
 	if resolvedARC == "" {
 		resolvedARC = render.DefaultARCVersion
 	}
+
+	conflictMsg, err := r.checkOwnershipConflicts(ctx, bundle, ownerRef)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if conflictMsg != "" {
+		logger.Info("scale set ownership conflict", "conflict", conflictMsg)
+		_ = r.updateStatus(ctx, depObj, tc.Spec.Image, resolvedARC, dep.Spec.Runner.RunnerScaleSetName, "False", "ScaleSetNameConflict", conflictMsg)
+		return ctrl.Result{}, nil
+	}
+
+	for _, obj := range bundle.Objects() {
+		u := &unstructured.Unstructured{Object: deepCopyMap(obj)}
+		u.SetOwnerReferences([]metav1.OwnerReference{ownerRef})
+		if err := r.applyObject(ctx, u); err != nil {
+			_ = r.updateStatus(ctx, depObj, tc.Spec.Image, resolvedARC, dep.Spec.Runner.RunnerScaleSetName, "False", "ApplyFailed", err.Error())
+			return ctrl.Result{}, fmt.Errorf("applying %s/%s: %w", u.GetKind(), u.GetName(), err)
+		}
+	}
+
 	if err := r.updateStatus(ctx, depObj, tc.Spec.Image, resolvedARC, dep.Spec.Runner.RunnerScaleSetName, "True", "Reconciled", "Rendered and applied ARC v2 bundle"); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -227,6 +238,43 @@ func (r *DeploymentReconciler) updateStatus(
 	return r.Client.Status().Update(ctx, updated)
 }
 
+func (r *DeploymentReconciler) checkOwnershipConflicts(ctx context.Context, bundle *render.Bundle, ownerRef metav1.OwnerReference) (string, error) {
+	objs := append([]render.K8sObject{bundle.AutoscalingRunnerSet}, bundle.Objects()...)
+	for _, obj := range objs {
+		if obj == nil {
+			continue
+		}
+		desired := &unstructured.Unstructured{Object: deepCopyMap(obj)}
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(desired.GroupVersionKind())
+		err := r.Client.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if msg, conflict := ownerConflict(existing, ownerRef); conflict {
+			return msg, nil
+		}
+	}
+	return "", nil
+}
+
+func ownerConflict(existing *unstructured.Unstructured, desired metav1.OwnerReference) (string, bool) {
+	for _, ref := range existing.GetOwnerReferences() {
+		isController := ref.Controller != nil && *ref.Controller
+		sameType := ref.APIVersion == desired.APIVersion && ref.Kind == desired.Kind
+		if !isController && !sameType {
+			continue
+		}
+		if ref.UID != desired.UID || (desired.UID == "" && ref.Name != desired.Name) {
+			return fmt.Sprintf("%s/%s is already owned by %s/%s", existing.GetKind(), existing.GetName(), ref.Kind, ref.Name), true
+		}
+	}
+	return "", false
+}
+
 func (r *DeploymentReconciler) applyObject(ctx context.Context, desired *unstructured.Unstructured) error {
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(desired.GroupVersionKind())
@@ -236,6 +284,11 @@ func (r *DeploymentReconciler) applyObject(ctx context.Context, desired *unstruc
 	}
 	if err != nil {
 		return err
+	}
+	if refs := desired.GetOwnerReferences(); len(refs) > 0 {
+		if msg, conflict := ownerConflict(existing, refs[0]); conflict {
+			return fmt.Errorf("%s", msg)
+		}
 	}
 	desired.SetResourceVersion(existing.GetResourceVersion())
 	if fins := existing.GetFinalizers(); len(fins) > 0 {
