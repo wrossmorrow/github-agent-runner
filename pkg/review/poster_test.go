@@ -365,11 +365,19 @@ func TestToGitHubCommentsSuggestions(t *testing.T) {
 			Body:       "Off-hunk start line",
 			Suggestion: "fixed()",
 		},
+		{
+			Path:       "pkg/a.go",
+			StartLine:  15, // inverted range (startLine > line)
+			Line:       12,
+			Severity:   "warning",
+			Body:       "Inverted start line",
+			Suggestion: "inverted()",
+		},
 	}
 
 	inline, offDiff := partitionComments(comments, validLines)
-	if len(inline) != 2 || len(offDiff) != 1 {
-		t.Fatalf("expected 2 inline and 1 offDiff, got inline=%d offDiff=%d", len(inline), len(offDiff))
+	if len(inline) != 2 || len(offDiff) != 2 {
+		t.Fatalf("expected 2 inline and 2 offDiff, got inline=%d offDiff=%d", len(inline), len(offDiff))
 	}
 	if offDiff[0].StartLine != 5 {
 		t.Fatalf("expected off-diff multi-line suggestion preserved cleanly, got %+v", offDiff[0])

@@ -359,7 +359,13 @@ func partitionComments(comments []Comment, validLines map[string]map[int]struct{
 			offDiff = append(offDiff, c)
 			continue
 		}
-		if c.StartLine >= c.Line || c.StartLine < 0 {
+		if c.StartLine == c.Line {
+			c.StartLine = 0
+		} else if c.StartLine > c.Line || c.StartLine < 0 {
+			if c.Suggestion != "" {
+				offDiff = append(offDiff, c)
+				continue
+			}
 			c.StartLine = 0
 		}
 		if validLines != nil {

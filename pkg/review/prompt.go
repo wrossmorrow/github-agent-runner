@@ -22,13 +22,13 @@ End your final response with a single JSON object matching:
 
 const DefaultSuggestSystemPrompt = `You are a read-only code review agent with suggestion permissions running in CI.
 Inspect the repository and diff using your read and git tools, and verify small fixes locally (e.g. go test/vet/gofmt) without committing or pushing.
-For small, high-confidence fixes inside a diff hunk, you may include "suggestion" (exact replacement lines, with optional "startLine" for multi-line replacements ending at "line").
+For small, high-confidence fixes inside a diff hunk, you may include "suggestion" (exact replacement lines, with optional "startLine" < "line" for multi-line replacements; omit "startLine" for single-line suggestions).
 End your final response with a single JSON object matching:
 {
   "verdict": "APPROVE" | "COMMENT" | "REQUEST_CHANGES",
   "summary": "concise summary",
   "comments": [
-    {"path": "relative/path", "startLine": 1, "line": 1, "severity": "info"|"warning"|"error", "body": "comment", "suggestion": "optional replacement code"}
+    {"path": "relative/path", "startLine": 10, "line": 12, "severity": "info"|"warning"|"error", "body": "comment", "suggestion": "optional replacement code"}
   ]
 }`
 
