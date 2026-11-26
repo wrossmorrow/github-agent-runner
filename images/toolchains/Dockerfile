@@ -25,13 +25,21 @@ FROM bufbuild/buf:${BUF_VERSION} AS buf
 
 # Build agentrunnerd (Go HTTP/SSE daemon that spawns `pi --mode rpc`).
 # Baked into the base agent image below so every derived toolchain stage ships with it.
-FROM golang:1.26-alpine AS agentrunnerd-build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS agentrunnerd-build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY api/ ./api/
 COPY pkg/ ./pkg/
 COPY cmd/agentrunnerd/ ./cmd/agentrunnerd/
-RUN CGO_ENABLED=0 go build -o /agentrunnerd ./cmd/agentrunnerd
+# Verify cross-compiled target OS/arch and static linkage (CGO_ENABLED=0) without QEMU execution.
+RUN os="${TARGETOS:-linux}" arch="${TARGETARCH:-$(go env GOARCH)}" \
+    && CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build -o /agentrunnerd ./cmd/agentrunnerd \
+    && meta="$(go version -m /agentrunnerd)" \
+    && printf '%s\n' "${meta}" | grep -q "CGO_ENABLED=0" \
+    && printf '%s\n' "${meta}" | grep -q "GOOS=${os}" \
+    && printf '%s\n' "${meta}" | grep -q "GOARCH=${arch}"
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
