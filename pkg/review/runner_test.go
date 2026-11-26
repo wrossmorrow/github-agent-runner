@@ -71,7 +71,21 @@ func TestHelperPiReview(t *testing.T) {
 			continue
 		}
 
-		if mode == "transient_socket_then_ok" && promptCount > 1 {
+		if mode == "bad_format_then_ok" && promptCount == 1 {
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":    "assistant",
+						"content": "Everything looks great, LGTM!",
+					},
+				},
+			})
+			continue
+		}
+
+		if (mode == "transient_socket_then_ok" || mode == "bad_format_then_ok") && promptCount > 1 {
 			if sp, _ := cmd["systemPrompt"].(string); strings.TrimSpace(sp) == "" {
 				_ = enc.Encode(map[string]any{
 					"type": "agent_end",
@@ -79,12 +93,16 @@ func TestHelperPiReview(t *testing.T) {
 						map[string]any{
 							"role":         "assistant",
 							"stopReason":   "error",
-							"errorMessage": "missing systemPrompt on retry",
+							"errorMessage": "missing systemPrompt on follow-up",
 							"content":      []any{},
 						},
 					},
 				})
 				continue
+			}
+			summary := "Recovered cleanly"
+			if mode == "bad_format_then_ok" {
+				summary = "Formatted after nudge"
 			}
 			_ = enc.Encode(map[string]any{"type": "turn_start"})
 			_ = enc.Encode(map[string]any{
@@ -92,7 +110,7 @@ func TestHelperPiReview(t *testing.T) {
 				"messages": []any{
 					map[string]any{
 						"role":    "assistant",
-						"content": `{"verdict":"APPROVE","summary":"Recovered cleanly","comments":[]}`,
+						"content": `{"verdict":"APPROVE","summary":"` + summary + `","comments":[]}`,
 					},
 				},
 			})
@@ -357,6 +375,63 @@ func TestRunnerTransientTransportRetry(t *testing.T) {
 		}, nil)
 		if err == nil || !strings.Contains(err.Error(), "UND_ERR_SOCKET") {
 			t.Fatalf("expected immediate UND_ERR_SOCKET error when retries=0, got %v", err)
+		}
+	})
+}
+
+func TestRunnerFormatNudge(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_WANT_REVIEW_HELPER", "1")
+	t.Setenv("HELPER_MODE", "bad_format_then_ok")
+
+	poster := &mockPoster{}
+	runner := &Runner{
+		Config: Config{
+			PiBin:  exe,
+			PiArgs: []string{"-test.run=TestHelperPiReview"},
+			Limits: v1alpha1.LimitsSpec{MaxTurns: 5, MaxDuration: "5s"},
+		},
+		Poster: poster,
+	}
+
+	var logs bytes.Buffer
+	outcome, err := runner.Run(context.Background(), Request{
+		Workspace:    t.TempDir(),
+		Instructions: "Check everything",
+		Output:       "pr-review",
+		Repo:         "org/repo",
+		PRNumber:     9,
+	}, &logs)
+	if err != nil {
+		t.Fatalf("expected format nudge to recover, got %v", err)
+	}
+	if outcome.Result.Verdict != "APPROVE" || outcome.Result.Summary != "Formatted after nudge" || outcome.Turns != 2 {
+		t.Fatalf("unexpected outcome after nudge: %+v", outcome)
+	}
+	if !poster.called {
+		t.Fatal("expected poster to be called after format nudge")
+	}
+	if !strings.Contains(logs.String(), "nudging once in-session") {
+		t.Fatalf("expected nudge log line, got:\n%s", logs.String())
+	}
+
+	t.Run("respects MaxTurns budget", func(t *testing.T) {
+		budgetRunner := &Runner{
+			Config: Config{
+				PiBin:  exe,
+				PiArgs: []string{"-test.run=TestHelperPiReview"},
+				Limits: v1alpha1.LimitsSpec{MaxTurns: 1, MaxDuration: "5s"},
+			},
+		}
+		_, err := budgetRunner.Run(context.Background(), Request{
+			Workspace:    t.TempDir(),
+			Instructions: "Check everything",
+		}, nil)
+		if err == nil || !strings.Contains(err.Error(), "no valid review result JSON") {
+			t.Fatalf("expected JSON parse error without exceeding MaxTurns=1, got %v", err)
 		}
 	})
 }
