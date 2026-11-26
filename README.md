@@ -137,7 +137,7 @@ jobs:
 | `fail-on` | `error` | Fail the check when any finding meets severity (`none` \| `warning` \| `error`) |
 | `output` | `pr-review` | Where to publish results (`pr-review` \| `suggest` \| `comment` \| `issue-comment` \| `release-draft` \| `stdout`); `issue-comment` requires `Issues: Read & write` and `release-draft` requires `Contents: Read & write` (with branch/tag protection) on the GitHub App |
 | `tag` | `""` | Git tag name for `release-draft` output (defaults to `GITHUB_REF_NAME` on tag pushes) |
-| `endpoint` | `http://127.0.0.1:8788/review` | Local `agentrunnerd` sidecar HTTP endpoint (`POST /run` and backwards-compatible alias `POST /review`) |
+| `endpoint` | `http://127.0.0.1:8788/run` | Local `agentrunnerd` sidecar HTTP endpoint (`POST /run` and backwards-compatible alias `POST /review`) |
 
 ### Action Outputs
 

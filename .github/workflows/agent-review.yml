@@ -40,5 +40,7 @@ jobs:
                lifecycle, error handling, or missing unit tests for new behavior.
 
             Only emit `error` severity for concrete bugs, security regressions, or broken invariants.
+            For small, locally verified fixes inside a single diff hunk, you may include a
+            "suggestion" (and optional "startLine" < "line") on the inline comment.
           fail-on: error
-          output: pr-review
+          output: suggest
