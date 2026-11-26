@@ -415,4 +415,9 @@ func TestToGitHubCommentsSuggestions(t *testing.T) {
 	if !strings.Contains(body1, "````suggestion\n") || !strings.HasSuffix(body1, "\n````") {
 		t.Fatalf("expected 4-backtick suggestion fence, got:\n%s", body1)
 	}
+
+	reviewBody := formatPRReviewBody(&Result{Verdict: "COMMENT", Summary: "S"}, inline, offDiff)
+	if !strings.Contains(reviewBody, "crossHunk()") {
+		t.Fatalf("expected off-diff suggestion code preserved in review body:\n%s", reviewBody)
+	}
 }

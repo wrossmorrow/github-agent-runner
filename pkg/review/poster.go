@@ -260,6 +260,11 @@ func appendCommentSection(b *strings.Builder, heading string, comments []Comment
 			loc = c.Path
 		}
 		fmt.Fprintf(b, "- `[%s]` `%s`: %s\n", strings.ToUpper(c.Severity), loc, c.Body)
+		if c.Suggestion != "" {
+			for _, line := range strings.Split(fenceCodeBlock("", c.Suggestion), "\n") {
+				fmt.Fprintf(b, "  %s\n", line)
+			}
+		}
 	}
 }
 
@@ -398,6 +403,10 @@ func partitionComments(comments []Comment, validLines map[string]map[int]int) (i
 }
 
 func fenceSuggestion(code string) string {
+	return fenceCodeBlock("suggestion", code)
+}
+
+func fenceCodeBlock(lang, code string) string {
 	code = strings.TrimRight(code, "\r\n")
 	maxRun := 0
 	cur := 0
@@ -416,7 +425,7 @@ func fenceSuggestion(code string) string {
 		fenceLen = maxRun + 1
 	}
 	fence := strings.Repeat("`", fenceLen)
-	return fence + "suggestion\n" + code + "\n" + fence
+	return fence + lang + "\n" + code + "\n" + fence
 }
 
 func toGitHubComments(comments []Comment) []map[string]any {
