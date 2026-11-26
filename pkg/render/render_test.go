@@ -148,6 +148,19 @@ func TestRenderARCv2AndSidecars(t *testing.T) {
 	if agent["image"] != tc.Spec.Image {
 		t.Fatalf("agent image = %v, want %v", agent["image"], tc.Spec.Image)
 	}
+	agentEnv := map[string]string{}
+	for _, e := range agent["env"].([]K8sObject) {
+		if v, ok := e["value"].(string); ok {
+			agentEnv[e["name"].(string)] = v
+		}
+	}
+	wantNoProxy := "localhost,127.0.0.1,::1,agent-gateway.internal"
+	if agentEnv["NO_PROXY"] != wantNoProxy || agentEnv["no_proxy"] != wantNoProxy {
+		t.Fatalf("expected NO_PROXY/no_proxy=%q, got NO_PROXY=%q no_proxy=%q", wantNoProxy, agentEnv["NO_PROXY"], agentEnv["no_proxy"])
+	}
+	if !strings.Contains(agentEnv["JAVA_TOOL_OPTIONS"], "http.nonProxyHosts=localhost|127.0.0.1|agent-gateway.internal") {
+		t.Fatalf("expected JAVA_TOOL_OPTIONS to bypass gateway host, got %q", agentEnv["JAVA_TOOL_OPTIONS"])
+	}
 	agentProbe := agent["readinessProbe"].(K8sObject)
 	if agentProbe["exec"] == nil {
 		t.Fatalf("expected agent exec readinessProbe for loopback, got %#v", agentProbe)

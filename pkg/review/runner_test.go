@@ -21,6 +21,7 @@ func TestHelperPiReview(t *testing.T) {
 	mode := os.Getenv("HELPER_MODE")
 	sc := bufio.NewScanner(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
+	promptCount := 0
 	for sc.Scan() {
 		var cmd map[string]any
 		if err := json.Unmarshal(sc.Bytes(), &cmd); err != nil {
@@ -29,6 +30,7 @@ func TestHelperPiReview(t *testing.T) {
 		if cmd["type"] != "prompt" {
 			continue
 		}
+		promptCount++
 		_ = enc.Encode(map[string]any{"type": "response", "id": cmd["id"], "success": true})
 
 		if mode == "too_many_turns" {
@@ -47,6 +49,36 @@ func TestHelperPiReview(t *testing.T) {
 						"stopReason":   "error",
 						"errorMessage": "401 Unauthorized",
 						"content":      []any{},
+					},
+				},
+			})
+			continue
+		}
+
+		if mode == "transient_socket_then_ok" && promptCount == 1 {
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":         "assistant",
+						"stopReason":   "error",
+						"errorMessage": "UND_ERR_SOCKET: other side closed",
+						"content":      []any{},
+					},
+				},
+			})
+			continue
+		}
+
+		if mode == "transient_socket_then_ok" && promptCount > 1 {
+			_ = enc.Encode(map[string]any{"type": "turn_start"})
+			_ = enc.Encode(map[string]any{
+				"type": "agent_end",
+				"messages": []any{
+					map[string]any{
+						"role":    "assistant",
+						"content": `{"verdict":"APPROVE","summary":"Recovered cleanly","comments":[]}`,
 					},
 				},
 			})
@@ -248,5 +280,46 @@ func TestRunnerModelErrorSurfaced(t *testing.T) {
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("expected surfaced model error, got %v", err)
+	}
+}
+
+func TestRunnerTransientTransportRetry(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_WANT_REVIEW_HELPER", "1")
+	t.Setenv("HELPER_MODE", "transient_socket_then_ok")
+
+	poster := &mockPoster{}
+	runner := &Runner{
+		Config: Config{
+			PiBin:  exe,
+			PiArgs: []string{"-test.run=TestHelperPiReview"},
+			Limits: v1alpha1.LimitsSpec{MaxTurns: 5, MaxDuration: "5s"},
+		},
+		Poster:       poster,
+		RetryBackoff: time.Millisecond,
+	}
+
+	var logs bytes.Buffer
+	outcome, err := runner.Run(context.Background(), Request{
+		Workspace:    t.TempDir(),
+		Instructions: "Check everything",
+		Output:       "pr-review",
+		Repo:         "org/repo",
+		PRNumber:     3,
+	}, &logs)
+	if err != nil {
+		t.Fatalf("expected transient transport retry to recover, got %v", err)
+	}
+	if outcome.Result.Verdict != "APPROVE" || outcome.ExitCode != 0 || outcome.Turns != 2 {
+		t.Fatalf("unexpected outcome after retry: %+v", outcome)
+	}
+	if !poster.called {
+		t.Fatal("expected poster to be called after recovery")
+	}
+	if !strings.Contains(logs.String(), "retrying in-session (1/2)") {
+		t.Fatalf("expected retry log line, got:\n%s", logs.String())
 	}
 }

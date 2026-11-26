@@ -16,22 +16,29 @@ import (
 	"github.com/wrossmorrow/agentrunner/pkg/pirpc"
 )
 
+const (
+	defaultMaxTransportRetries = 2
+	defaultRetryBackoff        = 2 * time.Second
+)
+
 // Config holds runtime settings loaded by agentrunnerd from /etc/agentrunner/config.json.
 type Config struct {
-	PiBin           string              `json:"piBin,omitempty"`
-	PiArgs          []string            `json:"piArgs,omitempty"`
-	Harness         string              `json:"harness"`
-	Provider        string              `json:"provider,omitempty"`
-	Model           string              `json:"model"`
-	GatewayEndpoint string              `json:"gatewayEndpoint"`
-	Limits          v1alpha1.LimitsSpec `json:"limits,omitempty"`
-	AgentsDirs      []string            `json:"agentsDirs,omitempty"`
+	PiBin               string              `json:"piBin,omitempty"`
+	PiArgs              []string            `json:"piArgs,omitempty"`
+	Harness             string              `json:"harness"`
+	Provider            string              `json:"provider,omitempty"`
+	Model               string              `json:"model"`
+	GatewayEndpoint     string              `json:"gatewayEndpoint"`
+	Limits              v1alpha1.LimitsSpec `json:"limits,omitempty"`
+	AgentsDirs          []string            `json:"agentsDirs,omitempty"`
+	MaxTransportRetries int                 `json:"maxTransportRetries,omitempty"`
 }
 
 // Runner executes a single headless review against `pi --mode rpc`.
 type Runner struct {
-	Config Config
-	Poster Poster
+	Config       Config
+	Poster       Poster
+	RetryBackoff time.Duration
 }
 
 // Run spawns `pi`, executes the review prompt, streams GitHub Actions log
@@ -102,22 +109,72 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	events, unsub := client.Subscribe()
 	defer unsub()
 
-	promptCmd := map[string]any{
-		"type":         "prompt",
-		"message":      userPrompt,
-		"systemPrompt": agentsMD,
+	maxRetries := defaultMaxTransportRetries
+	if r.Config.MaxTransportRetries > 0 {
+		maxRetries = r.Config.MaxTransportRetries
+	} else if r.Config.MaxTransportRetries < 0 {
+		maxRetries = 0
 	}
-	res, err := client.Send(ctx, promptCmd)
-	if err != nil {
-		return nil, fmt.Errorf("sending prompt: %w", err)
-	}
-	if !res.Success {
-		return nil, fmt.Errorf("prompt rejected: %s", res.Error)
+	backoff := r.RetryBackoff
+	if backoff <= 0 {
+		backoff = defaultRetryBackoff
 	}
 
-	finalText, turns, err := streamUntilEnd(ctx, events, r.Config.Limits.MaxTurns, client, logOut)
-	if err != nil {
-		return nil, err
+	var finalText string
+	turns := 0
+	for attempt := 0; ; attempt++ {
+		promptCmd := map[string]any{
+			"type":         "prompt",
+			"message":      userPrompt,
+			"systemPrompt": agentsMD,
+		}
+		if attempt > 0 {
+			promptCmd = map[string]any{
+				"type":    "prompt",
+				"message": "The previous response was interrupted by a transient network/socket error. Continue where you left off and finish the review.",
+			}
+		}
+
+		res, err := client.Send(ctx, promptCmd)
+		if err != nil {
+			return nil, fmt.Errorf("sending prompt: %w", err)
+		}
+		if !res.Success {
+			return nil, fmt.Errorf("prompt rejected: %s", res.Error)
+		}
+
+		remainingTurns := 0
+		if r.Config.Limits.MaxTurns > 0 {
+			remainingTurns = r.Config.Limits.MaxTurns - turns
+			if remainingTurns <= 0 {
+				remainingTurns = 1
+			}
+		}
+
+		attemptText, attemptTurns, err := streamUntilEnd(ctx, events, remainingTurns, client, logOut)
+		turns += attemptTurns
+		if err == nil {
+			finalText = attemptText
+			break
+		}
+
+		canRetry := attempt < maxRetries &&
+			ctx.Err() == nil &&
+			isTransientTransportError(err) &&
+			(r.Config.Limits.MaxTurns == 0 || turns < r.Config.Limits.MaxTurns)
+		if !canRetry {
+			return nil, err
+		}
+
+		delay := backoff * time.Duration(attempt+1)
+		_, _ = fmt.Fprintf(logOut, "transient model transport error (%v); retrying in-session (%d/%d) after %s...\n", err, attempt+1, maxRetries, delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 
 	reviewRes, err := ExtractReviewResult(finalText)
@@ -222,6 +279,33 @@ func streamUntilEnd(
 			}
 		}
 	}
+}
+
+func isTransientTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.HasPrefix(msg, "pi model error:") {
+		return false
+	}
+	for _, marker := range []string{
+		"und_err_socket",
+		"econnreset",
+		"etimedout",
+		"socket hang up",
+		"other side closed",
+		"fetch failed",
+		"terminated",
+		"connection reset",
+		"unexpected eof",
+		"broken pipe",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractLastOutcomeFromAgentEnd(ev pirpc.Event) (string, string) {
