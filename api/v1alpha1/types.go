@@ -13,6 +13,10 @@ import (
 const (
 	Group   = "agentic.example.io"
 	Version = "v1alpha1"
+
+	AgentModeReadOnly    = "read-only"
+	AgentModeSuggest     = "suggest"
+	AgentModeWriteBranch = "write-branch"
 )
 
 // TypeMeta mirrors Kubernetes metav1.TypeMeta.
@@ -75,6 +79,7 @@ type RunnerSpec struct {
 	MinRunners         int    `json:"minRunners,omitempty"`
 	MaxRunners         int    `json:"maxRunners,omitempty"`
 	RunnerImage        string `json:"runnerImage,omitempty"`
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 }
 
 // LocalRef references another resource by name.
@@ -82,13 +87,15 @@ type LocalRef struct {
 	Name string `json:"name"`
 }
 
-// AgentSpec configures the pi harness, model gateway, execution limits, and prompts.
+// AgentSpec configures the pi harness, mode, model gateway, execution limits, and prompts.
 type AgentSpec struct {
 	Harness               string           `json:"harness,omitempty"`
+	Mode                  string           `json:"mode,omitempty"`
 	Model                 string           `json:"model"`
 	Provider              string           `json:"provider,omitempty"`
 	Gateway               GatewaySpec      `json:"gateway"`
 	Limits                LimitsSpec       `json:"limits,omitempty"`
+	EgressAllowlist       []string         `json:"egressAllowlist,omitempty"`
 	SystemPromptRef       *ConfigMapKeyRef `json:"systemPromptRef,omitempty"`
 	AgentsMD              string           `json:"agentsMd,omitempty"`
 	GitHubAppSecretRef    *SecretRef       `json:"githubAppSecretRef,omitempty"`
@@ -133,12 +140,18 @@ func (t *AgenticRunnerToolchain) Validate() error {
 	if strings.TrimSpace(t.Spec.Image) == "" {
 		errs = append(errs, errors.New("spec.image is required"))
 	}
-	for _, host := range t.Spec.EgressAllowlist {
+	errs = append(errs, validateEgressAllowlist("spec.egressAllowlist", t.Spec.EgressAllowlist)...)
+	return errors.Join(errs...)
+}
+
+func validateEgressAllowlist(field string, hosts []string) []error {
+	var errs []error
+	for _, host := range hosts {
 		if strings.TrimSpace(host) == "" || strings.ContainsAny(host, " \t\n\r/") {
-			errs = append(errs, fmt.Errorf("invalid egressAllowlist entry %q", host))
+			errs = append(errs, fmt.Errorf("invalid %s entry %q", field, host))
 		}
 	}
-	return errors.Join(errs...)
+	return errs
 }
 
 // Validate checks required fields and invariants on AgenticRunnerDeployment.
@@ -152,6 +165,9 @@ func (d *AgenticRunnerDeployment) Validate() error {
 	}
 	if strings.TrimSpace(d.Spec.Runner.RunnerScaleSetName) == "" {
 		errs = append(errs, errors.New("spec.runner.runnerScaleSetName is required"))
+	}
+	if sa := d.Spec.Runner.ServiceAccountName; sa != "" && (strings.TrimSpace(sa) != sa || strings.ContainsAny(sa, " \t\n\r/")) {
+		errs = append(errs, fmt.Errorf("invalid spec.runner.serviceAccountName %q", sa))
 	}
 	if d.Spec.Runner.MinRunners < 0 {
 		errs = append(errs, errors.New("spec.runner.minRunners must be >= 0"))
@@ -168,6 +184,12 @@ func (d *AgenticRunnerDeployment) Validate() error {
 	if h := d.Spec.Agent.Harness; h != "" && h != "pi" {
 		errs = append(errs, fmt.Errorf("unsupported spec.agent.harness %q (only \"pi\" is supported)", h))
 	}
+	switch d.Spec.Agent.Mode {
+	case "", AgentModeReadOnly, AgentModeSuggest, AgentModeWriteBranch:
+	default:
+		errs = append(errs, fmt.Errorf("unsupported spec.agent.mode %q", d.Spec.Agent.Mode))
+	}
+	errs = append(errs, validateEgressAllowlist("spec.agent.egressAllowlist", d.Spec.Agent.EgressAllowlist)...)
 	if strings.TrimSpace(d.Spec.Agent.Model) == "" {
 		errs = append(errs, errors.New("spec.agent.model is required"))
 	}

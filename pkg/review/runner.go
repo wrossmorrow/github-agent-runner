@@ -21,6 +21,7 @@ type Config struct {
 	PiBin           string              `json:"piBin,omitempty"`
 	PiArgs          []string            `json:"piArgs,omitempty"`
 	Harness         string              `json:"harness"`
+	Mode            string              `json:"mode,omitempty"`
 	Provider        string              `json:"provider,omitempty"`
 	Model           string              `json:"model"`
 	GatewayEndpoint string              `json:"gatewayEndpoint"`
