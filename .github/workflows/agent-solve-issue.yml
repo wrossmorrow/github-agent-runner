@@ -77,12 +77,12 @@ jobs:
               printf 'Additional guidance:\n%s\n\n' "$EXTRA_INSTRUCTIONS"
             fi
             cat <<'REQ_EOF'
-            Requirements:
-            - Make minimal, clean, well-tested changes scoped to this issue.
-            - Add or update unit tests covering the new behavior.
-            - Run `just check` (and any other relevant local verification) before finishing.
-            - Do not commit, push, or open a PR manually; `agentrunnerd` handles git push and PR creation.
-            REQ_EOF
+          Requirements:
+          - Make minimal, clean, well-tested changes scoped to this issue.
+          - Add or update unit tests covering the new behavior.
+          - Run `just check` (and any other relevant local verification) before finishing.
+          - Do not commit, push, or open a PR manually; `agentrunnerd` handles git push and PR creation.
+          REQ_EOF
             printf -- '- Include Closes #%s in your summary.\n' "$ISSUE_NUMBER"
             printf '%s\n' "$delim"
           } >> "$GITHUB_OUTPUT"
