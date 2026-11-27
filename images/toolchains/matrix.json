@@ -2,18 +2,18 @@
   {
     "name": "golang",
     "target": "golang",
-    "minor": "1.25",
+    "minor": "1.26",
     "is_default": false,
-    "build_args": ["GO_VERSION=1.25.14"],
-    "smoke_cmd": "go version | grep -F 'go1.25.14'"
+    "build_args": ["GO_VERSION=1.26.10"],
+    "smoke_cmd": "go version | grep -F 'go1.26.10'"
   },
   {
     "name": "golang",
     "target": "golang",
-    "minor": "1.26",
+    "minor": "1.27",
     "is_default": true,
-    "build_args": ["GO_VERSION=1.26.10"],
-    "smoke_cmd": "go version | grep -F 'go1.26.10'"
+    "build_args": ["GO_VERSION=1.27.4"],
+    "smoke_cmd": "go version | grep -F 'go1.27.4'"
   },
   {
     "name": "python",
