@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wrossmorrow/agentrunner/api/v1alpha1"
-	"github.com/wrossmorrow/agentrunner/pkg/review"
+	"github.com/wrossmorrow/github-agent-runner/api/v1alpha1"
+	"github.com/wrossmorrow/github-agent-runner/pkg/review"
 )
 
 type stubExecutor struct {

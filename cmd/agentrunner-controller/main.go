@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/wrossmorrow/agentrunner/pkg/controller"
-	"github.com/wrossmorrow/agentrunner/pkg/render"
+	"github.com/wrossmorrow/github-agent-runner/pkg/controller"
+	"github.com/wrossmorrow/github-agent-runner/pkg/render"
 )
 
 func main() {

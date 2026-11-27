@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wrossmorrow/agentrunner/api/v1alpha1"
+	"github.com/wrossmorrow/github-agent-runner/api/v1alpha1"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wrossmorrow/agentrunner/api/v1alpha1"
+	"github.com/wrossmorrow/github-agent-runner/api/v1alpha1"
 )
 
 func sampleInputs() (*v1alpha1.AgenticRunnerDeployment, *v1alpha1.AgenticRunnerToolchain) {
