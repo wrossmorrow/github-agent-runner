@@ -199,7 +199,7 @@ func selectDefaultSystemPrompt(mode, output string) string {
 	switch {
 	case output == OutputReleaseDraft:
 		return DefaultReleaseNotesSystemPrompt
-	case output == OutputBranchCommit || output == OutputRevertPR || mode == v1alpha1.AgentModeWriteBranch:
+	case IsWriteOutput(output):
 		return DefaultWriteBranchSystemPrompt
 	case mode == v1alpha1.AgentModeSuggest || output == OutputSuggest:
 		return DefaultSuggestSystemPrompt

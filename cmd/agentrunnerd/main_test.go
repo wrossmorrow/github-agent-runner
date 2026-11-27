@@ -239,3 +239,45 @@ func TestLoadConfigModePrecedence(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadConfigProtectedBranchesEnv(t *testing.T) {
+	t.Run("empty or whitespace env does not disable defaults or override file", func(t *testing.T) {
+		for _, val := range []string{"", "   ", " , "} {
+			t.Setenv("AGENTRUNNER_PROTECTED_BRANCHES", val)
+			cfg, err := loadConfig(filepath.Join(t.TempDir(), "missing.json"))
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			if cfg.ProtectedBranches != nil {
+				t.Fatalf("val=%q turned ProtectedBranches into %+v, want nil", val, *cfg.ProtectedBranches)
+			}
+
+			cfgPath := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(cfgPath, []byte(`{"protectedBranches":["main","release"]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err = loadConfig(cfgPath)
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			if cfg.ProtectedBranches == nil || len(*cfg.ProtectedBranches) != 2 {
+				t.Fatalf("val=%q overwrote file ProtectedBranches: %+v", val, cfg.ProtectedBranches)
+			}
+		}
+	})
+
+	t.Run("non-empty env overrides file protectedBranches", func(t *testing.T) {
+		t.Setenv("AGENTRUNNER_PROTECTED_BRANCHES", "main, release")
+		cfgPath := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(cfgPath, []byte(`{"protectedBranches":[]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := loadConfig(cfgPath)
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		if cfg.ProtectedBranches == nil || len(*cfg.ProtectedBranches) != 2 || (*cfg.ProtectedBranches)[0] != "main" || (*cfg.ProtectedBranches)[1] != "release" {
+			t.Fatalf("unexpected ProtectedBranches: %+v", cfg.ProtectedBranches)
+		}
+	})
+}

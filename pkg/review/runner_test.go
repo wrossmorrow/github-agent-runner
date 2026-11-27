@@ -696,6 +696,8 @@ func TestSelectDefaultSystemPrompt(t *testing.T) {
 		{"mode suggest", v1alpha1.AgentModeSuggest, OutputPRReview, DefaultSuggestSystemPrompt},
 		{"output suggest", v1alpha1.AgentModeReadOnly, OutputSuggest, DefaultSuggestSystemPrompt},
 		{"mode write-branch", v1alpha1.AgentModeWriteBranch, OutputBranchCommit, DefaultWriteBranchSystemPrompt},
+		{"write-branch non-write output keeps reviewer prompt", v1alpha1.AgentModeWriteBranch, OutputStdout, DefaultReviewerSystemPrompt},
+		{"write-branch suggest output keeps suggest prompt", v1alpha1.AgentModeWriteBranch, OutputSuggest, DefaultSuggestSystemPrompt},
 		{"output revert-pr", v1alpha1.AgentModeWriteBranch, OutputRevertPR, DefaultWriteBranchSystemPrompt},
 		{"release draft takes precedence", v1alpha1.AgentModeSuggest, OutputReleaseDraft, DefaultReleaseNotesSystemPrompt},
 	}

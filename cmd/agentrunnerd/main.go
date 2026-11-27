@@ -103,14 +103,16 @@ func applyConfigEnvOverrides(cfg *review.Config) {
 	if envMode := os.Getenv("AGENTRUNNER_MODE"); envMode != "" {
 		cfg.Mode = envMode
 	}
-	if rawBranches, ok := os.LookupEnv("AGENTRUNNER_PROTECTED_BRANCHES"); ok {
-		branches := make([]string, 0)
+	if rawBranches := os.Getenv("AGENTRUNNER_PROTECTED_BRANCHES"); rawBranches != "" {
+		var branches []string
 		for _, part := range strings.Split(rawBranches, ",") {
 			if trimmed := strings.TrimSpace(part); trimmed != "" {
 				branches = append(branches, trimmed)
 			}
 		}
-		cfg.ProtectedBranches = &branches
+		if len(branches) > 0 {
+			cfg.ProtectedBranches = &branches
+		}
 	}
 }
 
