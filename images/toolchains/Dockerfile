@@ -186,7 +186,9 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     PATH="/usr/local/cargo/bin:/usr/local/rustup/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile minimal \
     && rustup component add rustfmt clippy \
-    && chown -R node:node /usr/local/cargo /usr/local/rustup
+    && chown -R node:node /usr/local/cargo /usr/local/rustup \
+    && printf 'export RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo\nexport PATH="/usr/local/cargo/bin:/usr/local/rustup/bin:${PATH}"\n' > /etc/profile.d/rust.sh \
+    && chmod 644 /etc/profile.d/rust.sh
 
 ENV PROTOC=/usr/local/bin/protoc
 
@@ -227,6 +229,9 @@ RUN curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSIO
 
 ENV GRADLE_HOME=/opt/gradle-${GRADLE_VERSION} \
     PATH="/opt/gradle-${GRADLE_VERSION}/bin:${PATH}"
+
+RUN printf 'export JAVA_HOME=/opt/jdk GRADLE_HOME=/opt/gradle-%s\nexport PATH="/opt/jdk/bin:/opt/gradle-%s/bin:${PATH}"\n' "${GRADLE_VERSION}" "${GRADLE_VERSION}" > /etc/profile.d/java.sh \
+    && chmod 644 /etc/profile.d/java.sh
 
 USER node
 WORKDIR /home/runner/_work
