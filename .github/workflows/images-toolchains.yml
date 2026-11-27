@@ -78,6 +78,7 @@ jobs:
               matrix='[]'
             else
               build_agent=false
+              # shellcheck disable=SC2016
               matrix="$(jq -c --arg name "$TARGET" '[.[] | select(.name == $name)]' images/toolchains/matrix.json)"
             fi
           else
@@ -89,9 +90,11 @@ jobs:
             push_agent=true
           fi
 
-          echo "build_agent=${build_agent}" >> "$GITHUB_OUTPUT"
-          echo "push_agent=${push_agent}" >> "$GITHUB_OUTPUT"
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          {
+            echo "build_agent=${build_agent}"
+            echo "push_agent=${push_agent}"
+            echo "matrix=${matrix}"
+          } >> "$GITHUB_OUTPUT"
 
   agent:
     name: Base agent image

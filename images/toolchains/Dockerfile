@@ -133,13 +133,13 @@ LABEL io.agentrunner.toolchain="python-${PYTHON_VERSION}"
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 
-ENV UV_PYTHON_INSTALL_DIR=/usr/local/python \
-    UV_PYTHON_DOWNLOADS=never
+ENV UV_PYTHON_INSTALL_DIR=/usr/local/python
 RUN uv python install --managed-python "${PYTHON_VERSION}" \
     && pybin="$(uv python find --managed-python "${PYTHON_VERSION}")" \
     && ln -sf "${pybin}" /usr/local/bin/python3 \
     && ln -sf /usr/local/bin/python3 /usr/local/bin/python \
     && chmod -R a+rX /usr/local/python
+ENV UV_PYTHON_DOWNLOADS=never
 
 USER node
 WORKDIR /home/runner/_work
