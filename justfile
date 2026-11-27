@@ -69,6 +69,16 @@ containerize-controller tag="latest":
     docker build -f images/controller/Dockerfile \
         -t {{ image_repository }}/{{ image_name_prefix }}-controller:{{ tag }} .
 
+# run formatting, static, build, and test checks for the optional usage-sink add-on
+check-usage-sink:
+    cd addons/usage-sink && test -z "$(gofmt -l .)" && go vet ./... && go build ./... && go test -race -shuffle=on -count=1 ./...
+
+# build the optional Envoy ALS usage-sink add-on image
+containerize-usage-sink tag="latest":
+    docker build -f addons/usage-sink/Dockerfile \
+        -t {{ image_repository }}/{{ image_name_prefix }}-usage-sink:{{ tag }} \
+        addons/usage-sink
+
 # copy canonical CRDs into the Helm chart crds/ directory
 sync-chart-crds:
     cp config/crd/agenticrunnerdeployments.yaml charts/agentrunner-controller/crds/agenticrunnerdeployments.yaml
