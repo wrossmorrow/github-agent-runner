@@ -404,12 +404,15 @@ func TestRunnerModelErrorSurfaced(t *testing.T) {
 		},
 	}
 
-	_, err = runner.Run(context.Background(), Request{
+	outcome, err := runner.Run(context.Background(), Request{
 		Workspace:    t.TempDir(),
 		Instructions: "Check everything",
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("expected surfaced model error, got %v", err)
+	}
+	if outcome == nil || outcome.SessionID == "" {
+		t.Fatalf("expected non-empty SessionID on error outcome, got %+v", outcome)
 	}
 }
 

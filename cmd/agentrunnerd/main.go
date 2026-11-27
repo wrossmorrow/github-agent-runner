@@ -185,6 +185,10 @@ func handleRun(exec reviewExecutor, mode string) http.HandlerFunc {
 		var trailer resultTrailer
 		if err != nil {
 			trailer = resultTrailer{ExitCode: 1, Error: err.Error()}
+			if outcome != nil {
+				trailer.SessionID = outcome.SessionID
+				trailer.Turns = outcome.Turns
+			}
 			_, _ = fmt.Fprintf(fw, "::error::%s\n", err.Error())
 		} else {
 			trailer = resultTrailer{

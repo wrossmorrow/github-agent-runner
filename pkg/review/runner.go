@@ -114,7 +114,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	gatewayToken := strings.TrimSpace(os.Getenv("AGENT_GATEWAY_TOKEN"))
 	piDir, err := writePiConfigDir(r.Config, req, agentsMD, gatewayToken, sessionID, sessionKind, sessionName)
 	if err != nil {
-		return nil, err
+		return &Outcome{SessionID: sessionID}, err
 	}
 	defer func() { _ = os.RemoveAll(piDir) }()
 	sessionFile := filepath.Join(piDir, sessionID+".jsonl")
@@ -138,7 +138,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	client := pirpc.NewClient(bin, args, req.Workspace, env)
 	client.Stderr = logOut
 	if err := client.Start(); err != nil {
-		return nil, fmt.Errorf("starting pi rpc: %w", err)
+		return &Outcome{SessionID: sessionID}, fmt.Errorf("starting pi rpc: %w", err)
 	}
 
 	var outcome *Outcome
@@ -214,7 +214,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		ctx, client, events, userPrompt, transientRetryPrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
 	)
 	if err != nil {
-		return nil, err
+		return &Outcome{SessionID: sessionID, Turns: turns}, err
 	}
 
 	var reviewRes *Result
@@ -232,7 +232,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 				ctx, client, events, nudgePrompt, nudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
 			)
 			if nudgeErr != nil {
-				return nil, nudgeErr
+				return &Outcome{SessionID: sessionID, Turns: turns}, nudgeErr
 			}
 			finalText = nudgeText
 			reviewRes, err = ExtractReviewResult(finalText)
@@ -246,12 +246,12 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 			preview = preview[:400] + "..."
 		}
 		_, _ = fmt.Fprintf(logOut, "pi final assistant text: %s\n", preview)
-		return nil, err
+		return &Outcome{SessionID: sessionID, Turns: turns}, err
 	}
 
 	if r.Poster != nil {
 		if err := r.Poster.PostReview(ctx, req, reviewRes); err != nil {
-			return nil, fmt.Errorf("posting review: %w", err)
+			return &Outcome{SessionID: sessionID, Turns: turns}, fmt.Errorf("posting review: %w", err)
 		}
 	}
 
