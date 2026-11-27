@@ -177,7 +177,7 @@ jobs:
 ```bash
 just check                    # gofmt check, go vet, go build, go test -race -shuffle=on
 just render-summary           # render built-in example manifests and list Kind/Name
-just containerize golang 1.25 # build a toolchain image (agent|python|golang|rust|java; minor tags auto-apply matrix build args)
+just containerize golang 1.26 # build a toolchain image (agent|python|golang|rust|java; minor tags auto-apply matrix build args)
 just containerize-github-auth # build the github-auth sidecar image
 just containerize-controller  # build the controller image
 just sync-chart-crds          # copy config/crd/*.yaml into charts/agentrunner-controller/crds/
