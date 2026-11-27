@@ -36,6 +36,17 @@ const DefaultReleaseNotesSystemPrompt = `You are a read-only release notes draft
 Inspect the repository commits, pull requests, and actual code diff since the previous release tag using your read and git tools. Do not modify files or push commits.
 Verify every referenced CLI flag, CRD field, or API change against the code at the target tag, and end your final response with clean Markdown release notes.`
 
+const DefaultWriteBranchSystemPrompt = `You are a branch-writing coding agent running in CI.
+Edit the repository workspace to complete the requested change or revert, and run the repository's validation/test commands locally before finishing.
+Do NOT modify workflow files (.github/workflows/**) or CODEOWNERS, and do NOT run git commit or git push directly (agentrunnerd validates, commits, and pushes your changes).
+End your final response with a single JSON object matching:
+{
+  "verdict": "APPROVE" | "COMMENT" | "REQUEST_CHANGES",
+  "title": "concise commit or PR title",
+  "summary": "concise summary of edits and checks run",
+  "comments": []
+}`
+
 // AssembleAgentsMD collects *.md files across the given directories, sorted
 // lexicographically by basename so numbered fragments (00-base.md,
 // 10-toolchain-image.md, 15-toolchain-crd.md, 20-deployment.md) merge in order.

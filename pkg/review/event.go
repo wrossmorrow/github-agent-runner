@@ -31,6 +31,7 @@ func HydrateFromEvent(req Request) Request {
 				Ref string `json:"ref"`
 			} `json:"base"`
 			Head struct {
+				Ref string `json:"ref"`
 				SHA string `json:"sha"`
 			} `json:"head"`
 		} `json:"pull_request"`
@@ -46,6 +47,9 @@ func HydrateFromEvent(req Request) Request {
 				Base   struct {
 					Ref string `json:"ref"`
 				} `json:"base"`
+				Head struct {
+					Ref string `json:"ref"`
+				} `json:"head"`
 			} `json:"pull_requests"`
 		} `json:"workflow_run"`
 		Deployment struct {
@@ -71,6 +75,9 @@ func HydrateFromEvent(req Request) Request {
 	if req.BaseRef == "" {
 		req.BaseRef = payload.PullRequest.Base.Ref
 	}
+	if req.HeadRef == "" {
+		req.HeadRef = payload.PullRequest.Head.Ref
+	}
 	if req.HeadSHA == "" {
 		req.HeadSHA = payload.PullRequest.Head.SHA
 	}
@@ -95,6 +102,9 @@ func HydrateFromEvent(req Request) Request {
 	}
 	if req.BaseRef == "" && len(payload.WorkflowRun.PullRequests) > 0 {
 		req.BaseRef = payload.WorkflowRun.PullRequests[0].Base.Ref
+	}
+	if req.HeadRef == "" && len(payload.WorkflowRun.PullRequests) > 0 {
+		req.HeadRef = payload.WorkflowRun.PullRequests[0].Head.Ref
 	}
 
 	// push (tags) event

@@ -8,8 +8,14 @@ inputs:
     description: Fail the step on severity (none | warning | error)
     default: error
   output:
-    description: Output target (pr-review | suggest | comment | issue-comment | release-draft | stdout)
+    description: Output target (pr-review | suggest | comment | issue-comment | release-draft | branch-commit | revert-pr | stdout)
     default: pr-review
+  branch:
+    description: Target branch for branch-commit / revert-pr (defaults to PR head/current branch for branch-commit, bot/revert-<short-sha> for revert-pr; required in detached-HEAD non-PR runs)
+    default: ""
+  open-pr:
+    description: Open a pull request after pushing for branch-commit output (true | false; revert-pr always opens a PR)
+    default: "false"
   tag:
     description: Git tag name for release-draft output (defaults to GITHUB_REF_NAME on tag pushes)
     default: ""
@@ -41,6 +47,8 @@ runs:
         AGENT_INSTRUCTIONS: ${{ inputs.instructions }}
         AGENT_FAIL_ON: ${{ inputs.fail-on }}
         AGENT_OUTPUT: ${{ inputs.output }}
+        AGENT_BRANCH: ${{ inputs.branch }}
+        AGENT_OPEN_PR: ${{ inputs.open-pr }}
         AGENT_TAG: ${{ inputs.tag }}
         AGENT_ENDPOINT: ${{ inputs.endpoint }}
       run: |
@@ -53,6 +61,11 @@ runs:
           tag_val="${GITHUB_REF_NAME:-}"
         fi
 
+        open_pr_bool=false
+        if [ "$AGENT_OPEN_PR" = "true" ]; then
+          open_pr_bool=true
+        fi
+
         jq -n \
           --arg workspace "$GITHUB_WORKSPACE" \
           --arg eventPath "$GITHUB_EVENT_PATH" \
@@ -60,10 +73,12 @@ runs:
           --arg instructions "$AGENT_INSTRUCTIONS" \
           --arg failOn "$AGENT_FAIL_ON" \
           --arg output "$AGENT_OUTPUT" \
+          --arg targetBranch "$AGENT_BRANCH" \
+          --argjson openPr "$open_pr_bool" \
           --arg tag "$tag_val" \
           --arg repo "$GITHUB_REPOSITORY" \
           --arg runId "$GITHUB_RUN_ID" \
-          '{workspace:$workspace, eventPath:$eventPath, eventName:$eventName, instructions:$instructions, failOn:$failOn, output:$output, tag:$tag, repo:$repo, runId:$runId}' \
+          '{workspace:$workspace, eventPath:$eventPath, eventName:$eventName, instructions:$instructions, failOn:$failOn, output:$output, targetBranch:$targetBranch, openPr:$openPr, tag:$tag, repo:$repo, runId:$runId}' \
         | curl --fail-with-body -sSN -X POST \
             -H 'Content-Type: application/json' \
             --data-binary @- \

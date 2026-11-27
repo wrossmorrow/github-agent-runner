@@ -32,13 +32,18 @@ var ErrOutputNotImplemented = errors.New("output mode not yet implemented")
 // Planned future outputs wrap ErrOutputNotImplemented so callers can surface HTTP 501.
 func CheckOutputSupport(output string) error {
 	switch output {
-	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft, OutputSuggest:
+	case "", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft, OutputSuggest, OutputBranchCommit, OutputRevertPR:
 		return nil
-	case OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR:
+	case OutputDeploymentStatus:
 		return fmt.Errorf("%w: %q", ErrOutputNotImplemented, output)
 	default:
 		return fmt.Errorf("unsupported output mode %q", output)
 	}
+}
+
+// IsWriteOutput reports whether output mutates branches or opens PRs/reverts.
+func IsWriteOutput(output string) bool {
+	return output == OutputBranchCommit || output == OutputRevertPR
 }
 
 // Poster publishes a completed review back to GitHub.
@@ -51,6 +56,9 @@ type Poster interface {
 type GhPoster struct {
 	TokenFile string
 	GHBin     string
+	// ProtectedBranches overrides DefaultProtectedBranches (main, master, HEAD) when non-nil;
+	// an explicit empty slice disables the local branch-name denylist while keeping ref-syntax validation.
+	ProtectedBranches []string
 }
 
 // PostReview submits the structured Result to GitHub as a PR review or comment.
@@ -76,6 +84,8 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 	}
 
 	switch req.Output {
+	case OutputBranchCommit, OutputRevertPR:
+		return p.postBranchCommit(ctx, ghBin, token, req, res)
 	case OutputReleaseDraft:
 		return p.postReleaseDraft(ctx, ghBin, token, req, res)
 	case OutputIssueComment:

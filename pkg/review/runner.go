@@ -33,15 +33,16 @@ Do not run any more tools. Respond with ONLY a single valid JSON object matching
 
 // Config holds runtime settings loaded by agentrunnerd from /etc/agentrunner/config.json.
 type Config struct {
-	PiBin           string              `json:"piBin,omitempty"`
-	PiArgs          []string            `json:"piArgs,omitempty"`
-	Harness         string              `json:"harness"`
-	Mode            string              `json:"mode,omitempty"`
-	Provider        string              `json:"provider,omitempty"`
-	Model           string              `json:"model"`
-	GatewayEndpoint string              `json:"gatewayEndpoint"`
-	Limits          v1alpha1.LimitsSpec `json:"limits,omitempty"`
-	AgentsDirs      []string            `json:"agentsDirs,omitempty"`
+	PiBin             string              `json:"piBin,omitempty"`
+	PiArgs            []string            `json:"piArgs,omitempty"`
+	Harness           string              `json:"harness"`
+	Mode              string              `json:"mode,omitempty"`
+	Provider          string              `json:"provider,omitempty"`
+	Model             string              `json:"model"`
+	GatewayEndpoint   string              `json:"gatewayEndpoint"`
+	Limits            v1alpha1.LimitsSpec `json:"limits,omitempty"`
+	AgentsDirs        []string            `json:"agentsDirs,omitempty"`
+	ProtectedBranches *[]string           `json:"protectedBranches,omitempty"`
 }
 
 // Runner executes a single headless review against `pi --mode rpc`.
@@ -62,6 +63,15 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	}
 
 	req = HydrateFromEvent(req)
+	if IsWriteOutput(req.Output) {
+		dirty, err := listChangedPaths(ctx, req.Workspace)
+		if err != nil {
+			return nil, fmt.Errorf("checking workspace git status before write-branch run: %w", err)
+		}
+		if len(dirty) > 0 {
+			return nil, fmt.Errorf("workspace has pre-existing uncommitted changes before write-branch run (%d path(s), e.g. %q); ensure the workspace is clean before invoking write outputs", len(dirty), dirty[0])
+		}
+	}
 	if req.Output == OutputReleaseDraft && req.BaseRef == "" {
 		if prev := resolvePreviousTag(ctx, req.Workspace, req.Tag); prev != "" {
 			req.BaseRef = prev
@@ -198,6 +208,8 @@ func selectDefaultSystemPrompt(mode, output string) string {
 	switch {
 	case output == OutputReleaseDraft:
 		return DefaultReleaseNotesSystemPrompt
+	case IsWriteOutput(output):
+		return DefaultWriteBranchSystemPrompt
 	case mode == v1alpha1.AgentModeSuggest || output == OutputSuggest:
 		return DefaultSuggestSystemPrompt
 	default:

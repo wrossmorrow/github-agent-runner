@@ -97,6 +97,7 @@ type AgentSpec struct {
 	Gateway               GatewaySpec      `json:"gateway"`
 	Limits                LimitsSpec       `json:"limits,omitempty"`
 	EgressAllowlist       []string         `json:"egressAllowlist,omitempty"`
+	ProtectedBranches     *[]string        `json:"protectedBranches,omitempty"`
 	SystemPromptRef       *ConfigMapKeyRef `json:"systemPromptRef,omitempty"`
 	AgentsMD              string           `json:"agentsMd,omitempty"`
 	GitHubAppSecretRef    *SecretRef       `json:"githubAppSecretRef,omitempty"`
@@ -198,6 +199,13 @@ func (d *AgenticRunnerDeployment) Validate() error {
 		errs = append(errs, fmt.Errorf("unsupported spec.agent.mode %q", d.Spec.Agent.Mode))
 	}
 	errs = append(errs, validateEgressAllowlist("spec.agent.egressAllowlist", d.Spec.Agent.EgressAllowlist)...)
+	if d.Spec.Agent.ProtectedBranches != nil {
+		for _, b := range *d.Spec.Agent.ProtectedBranches {
+			if strings.TrimSpace(b) == "" || strings.ContainsAny(b, " \t\n\r") {
+				errs = append(errs, fmt.Errorf("invalid spec.agent.protectedBranches entry %q", b))
+			}
+		}
+	}
 	if strings.TrimSpace(d.Spec.Agent.Model) == "" {
 		errs = append(errs, errors.New("spec.agent.model is required"))
 	}

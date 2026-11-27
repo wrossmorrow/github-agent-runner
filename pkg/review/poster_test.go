@@ -165,12 +165,12 @@ exit 0
 }
 
 func TestCheckOutputSupport(t *testing.T) {
-	for _, okOut := range []string{"", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft, OutputSuggest} {
+	for _, okOut := range []string{"", OutputStdout, OutputPRReview, OutputComment, OutputIssueComment, OutputReleaseDraft, OutputSuggest, OutputBranchCommit, OutputRevertPR} {
 		if err := CheckOutputSupport(okOut); err != nil {
 			t.Errorf("CheckOutputSupport(%q) unexpected error: %v", okOut, err)
 		}
 	}
-	for _, futureOut := range []string{OutputDeploymentStatus, OutputBranchCommit, OutputRevertPR} {
+	for _, futureOut := range []string{OutputDeploymentStatus} {
 		err := CheckOutputSupport(futureOut)
 		if !errors.Is(err, ErrOutputNotImplemented) {
 			t.Errorf("CheckOutputSupport(%q) = %v, want ErrOutputNotImplemented", futureOut, err)

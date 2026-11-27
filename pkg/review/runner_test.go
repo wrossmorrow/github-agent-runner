@@ -695,6 +695,10 @@ func TestSelectDefaultSystemPrompt(t *testing.T) {
 		{"default reviewer", v1alpha1.AgentModeReadOnly, OutputPRReview, DefaultReviewerSystemPrompt},
 		{"mode suggest", v1alpha1.AgentModeSuggest, OutputPRReview, DefaultSuggestSystemPrompt},
 		{"output suggest", v1alpha1.AgentModeReadOnly, OutputSuggest, DefaultSuggestSystemPrompt},
+		{"mode write-branch", v1alpha1.AgentModeWriteBranch, OutputBranchCommit, DefaultWriteBranchSystemPrompt},
+		{"write-branch non-write output keeps reviewer prompt", v1alpha1.AgentModeWriteBranch, OutputStdout, DefaultReviewerSystemPrompt},
+		{"write-branch suggest output keeps suggest prompt", v1alpha1.AgentModeWriteBranch, OutputSuggest, DefaultSuggestSystemPrompt},
+		{"output revert-pr", v1alpha1.AgentModeWriteBranch, OutputRevertPR, DefaultWriteBranchSystemPrompt},
 		{"release draft takes precedence", v1alpha1.AgentModeSuggest, OutputReleaseDraft, DefaultReleaseNotesSystemPrompt},
 	}
 	for _, tc := range cases {
@@ -703,5 +707,41 @@ func TestSelectDefaultSystemPrompt(t *testing.T) {
 				t.Fatalf("selectDefaultSystemPrompt(%q, %q) did not match expected prompt", tc.mode, tc.output)
 			}
 		})
+	}
+}
+
+func TestRunnerWriteOutputRejectsDirtyWorkspace(t *testing.T) {
+	_, repo := initTestRepoWithBareRemote(t)
+
+	// Leave an untracked file in the workspace before running a write output.
+	if err := os.WriteFile(filepath.Join(repo, "stray-artifact.tmp"), []byte("leftover\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &Runner{
+		Config: Config{
+			PiBin: filepath.Join(t.TempDir(), "nonexistent-pi"),
+			Mode:  v1alpha1.AgentModeWriteBranch,
+		},
+	}
+
+	_, err := runner.Run(context.Background(), Request{
+		Workspace:    repo,
+		Instructions: "Fix tests",
+		Output:       OutputBranchCommit,
+		TargetBranch: "bot/fix-dirty",
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "pre-existing uncommitted changes") {
+		t.Fatalf("expected dirty workspace error before starting pi, got %v", err)
+	}
+
+	_, nonGitErr := runner.Run(context.Background(), Request{
+		Workspace:    t.TempDir(),
+		Instructions: "Fix tests",
+		Output:       OutputBranchCommit,
+		TargetBranch: "bot/fix-nongit",
+	}, nil)
+	if nonGitErr == nil || !strings.Contains(nonGitErr.Error(), "checking workspace git status") {
+		t.Fatalf("expected git status failure before starting pi on non-git workspace, got %v", nonGitErr)
 	}
 }

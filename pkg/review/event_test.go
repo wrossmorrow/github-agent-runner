@@ -17,6 +17,21 @@ func TestHydrateFromEventAllShapes(t *testing.T) {
 		return p
 	}
 
+	t.Run("pull_request", func(t *testing.T) {
+		ep := writeEvent(t, `{
+			"repository": {"full_name": "org/repo"},
+			"pull_request": {
+				"number": 77,
+				"base": {"ref": "main"},
+				"head": {"ref": "feat/fix-ci", "sha": "abc123"}
+			}
+		}`)
+		got := HydrateFromEvent(Request{EventPath: ep, EventName: "pull_request"})
+		if got.Repo != "org/repo" || got.PRNumber != 77 || got.BaseRef != "main" || got.HeadRef != "feat/fix-ci" || got.HeadSHA != "abc123" {
+			t.Fatalf("unexpected hydration for pull_request: %+v", got)
+		}
+	})
+
 	t.Run("issues", func(t *testing.T) {
 		ep := writeEvent(t, `{
 			"repository": {"full_name": "org/repo"},
@@ -45,11 +60,11 @@ func TestHydrateFromEventAllShapes(t *testing.T) {
 			"workflow_run": {
 				"id": 987654321,
 				"head_sha": "deadbeef",
-				"pull_requests": [{"number": 12, "base": {"ref": "main"}}]
+				"pull_requests": [{"number": 12, "base": {"ref": "main"}, "head": {"ref": "fix/flaky"}}]
 			}
 		}`)
 		got := HydrateFromEvent(Request{EventPath: ep, EventName: "workflow_run"})
-		if got.WorkflowRunID != 987654321 || got.HeadSHA != "deadbeef" || got.PRNumber != 12 || got.BaseRef != "main" {
+		if got.WorkflowRunID != 987654321 || got.HeadSHA != "deadbeef" || got.PRNumber != 12 || got.BaseRef != "main" || got.HeadRef != "fix/flaky" {
 			t.Fatalf("unexpected hydration for workflow_run: %+v", got)
 		}
 	})
