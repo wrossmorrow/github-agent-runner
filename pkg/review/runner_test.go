@@ -709,3 +709,29 @@ func TestSelectDefaultSystemPrompt(t *testing.T) {
 		})
 	}
 }
+
+func TestRunnerWriteOutputRejectsDirtyWorkspace(t *testing.T) {
+	_, repo := initTestRepoWithBareRemote(t)
+
+	// Leave an untracked file in the workspace before running a write output.
+	if err := os.WriteFile(filepath.Join(repo, "stray-artifact.tmp"), []byte("leftover\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &Runner{
+		Config: Config{
+			PiBin: filepath.Join(t.TempDir(), "nonexistent-pi"),
+			Mode:  v1alpha1.AgentModeWriteBranch,
+		},
+	}
+
+	_, err := runner.Run(context.Background(), Request{
+		Workspace:    repo,
+		Instructions: "Fix tests",
+		Output:       OutputBranchCommit,
+		TargetBranch: "bot/fix-dirty",
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "pre-existing uncommitted changes") {
+		t.Fatalf("expected dirty workspace error before starting pi, got %v", err)
+	}
+}

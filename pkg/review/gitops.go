@@ -152,7 +152,16 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 		}
 	}
 
-	if _, err := runGit(ctx, req.Workspace, "", "add", "-A"); err != nil {
+	seen := make(map[string]struct{}, len(changed))
+	uniqueChanged := make([]string, 0, len(changed))
+	for _, p := range changed {
+		if _, ok := seen[p]; !ok {
+			seen[p] = struct{}{}
+			uniqueChanged = append(uniqueChanged, p)
+		}
+	}
+	addArgs := append([]string{"add", "--"}, uniqueChanged...)
+	if _, err := runGit(ctx, req.Workspace, "", addArgs...); err != nil {
 		return fmt.Errorf("staging workspace changes: %w", err)
 	}
 

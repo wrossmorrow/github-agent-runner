@@ -128,8 +128,11 @@ func initTestRepoWithBareRemote(t *testing.T) (bareDir, workDir string) {
 	if err := os.WriteFile(filepath.Join(workDir, "app.go"), []byte("package app\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(workDir, "remove.go"), []byte("package app\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	run(workDir, "checkout", "-b", "main")
-	run(workDir, "add", "app.go")
+	run(workDir, "add", "app.go", "remove.go")
 	run(workDir, "commit", "-m", "initial commit")
 	run(workDir, "push", "-u", "origin", "main")
 	return bareDir, workDir
@@ -143,6 +146,12 @@ func TestGhPosterBranchCommitEndToEnd(t *testing.T) {
 	}
 
 	if err := os.WriteFile(filepath.Join(workDir, "app.go"), []byte("package app\n\nfunc Fixed() bool { return true }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, "added.go"), []byte("package app\n\nfunc Added() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(workDir, "remove.go")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -169,6 +178,15 @@ func TestGhPosterBranchCommitEndToEnd(t *testing.T) {
 	mainHead, _ := exec.Command("git", "-C", bareDir, "rev-parse", "refs/heads/main").CombinedOutput()
 	if strings.TrimSpace(string(showBranch)) == strings.TrimSpace(string(mainHead)) {
 		t.Fatal("expected bot/fix-42 to advance ahead of main")
+	}
+
+	treeOut, err := exec.Command("git", "-C", bareDir, "ls-tree", "--name-only", "refs/heads/bot/fix-42").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git ls-tree failed: %v (%s)", err, string(treeOut))
+	}
+	tree := string(treeOut)
+	if !strings.Contains(tree, "app.go") || !strings.Contains(tree, "added.go") || strings.Contains(tree, "remove.go") {
+		t.Fatalf("unexpected tree on bot/fix-42 (want app.go & added.go, no remove.go):\n%s", tree)
 	}
 }
 

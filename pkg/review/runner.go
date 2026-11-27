@@ -63,6 +63,11 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	}
 
 	req = HydrateFromEvent(req)
+	if IsWriteOutput(req.Output) {
+		if dirty, err := listChangedPaths(ctx, req.Workspace); err == nil && len(dirty) > 0 {
+			return nil, fmt.Errorf("workspace has pre-existing uncommitted changes before write-branch run (%d path(s), e.g. %q); ensure the workspace is clean before invoking write outputs", len(dirty), dirty[0])
+		}
+	}
 	if req.Output == OutputReleaseDraft && req.BaseRef == "" {
 		if prev := resolvePreviousTag(ctx, req.Workspace, req.Tag); prev != "" {
 			req.BaseRef = prev
