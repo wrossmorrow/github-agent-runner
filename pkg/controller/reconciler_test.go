@@ -13,8 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/wrossmorrow/agentrunner/api/v1alpha1"
-	"github.com/wrossmorrow/agentrunner/pkg/render"
+	"github.com/wrossmorrow/github-agent-runner/api/v1alpha1"
+	"github.com/wrossmorrow/github-agent-runner/pkg/render"
 )
 
 func newUnstructuredDeployment(ns, name, toolchainName string) *unstructured.Unstructured {

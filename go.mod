@@ -1,4 +1,4 @@
-module github.com/wrossmorrow/agentrunner
+module github.com/wrossmorrow/github-agent-runner
 
 go 1.26.0
 

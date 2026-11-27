@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/wrossmorrow/agentrunner/api/v1alpha1"
-	"github.com/wrossmorrow/agentrunner/pkg/render"
+	"github.com/wrossmorrow/github-agent-runner/api/v1alpha1"
+	"github.com/wrossmorrow/github-agent-runner/pkg/render"
 )
 
 func main() {
