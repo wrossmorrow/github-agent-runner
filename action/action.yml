@@ -14,7 +14,7 @@ inputs:
     description: Target branch for branch-commit / revert-pr (defaults to PR head/current branch for branch-commit, bot/revert-<short-sha> for revert-pr; required in detached-HEAD non-PR runs)
     default: ""
   open-pr:
-    description: Open a pull request after pushing for branch-commit output (true | false)
+    description: Open a pull request after pushing for branch-commit output (true | false; revert-pr always opens a PR)
     default: "false"
   tag:
     description: Git tag name for release-draft output (defaults to GITHUB_REF_NAME on tag pushes)

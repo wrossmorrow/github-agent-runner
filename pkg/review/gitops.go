@@ -163,7 +163,7 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 		return fmt.Errorf("reading current branch: %w", err)
 	}
 	if strings.TrimSpace(string(curBranchOut)) != branch {
-		if _, err := runGit(ctx, req.Workspace, "", "checkout", "-B", branch); err != nil {
+		if _, err := runGit(ctx, req.Workspace, "", "checkout", "-b", branch); err != nil {
 			return fmt.Errorf("switching to target branch %q: %w", branch, err)
 		}
 	}

@@ -237,6 +237,51 @@ func TestGhPosterBranchCommitStagedGitMvAndRm(t *testing.T) {
 	}
 }
 
+func TestGhPosterBranchCommitRefusesToResetExistingLocalBranch(t *testing.T) {
+	_, workDir := initTestRepoWithBareRemote(t)
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", workDir, "-c", "user.name=Test", "-c", "user.email=test@example.com"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	run("checkout", "-b", "bot/existing")
+	if err := os.WriteFile(filepath.Join(workDir, "existing.txt"), []byte("keep me\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "existing.txt")
+	run("commit", "-m", "prior branch commit")
+	wantSHA := run("rev-parse", "bot/existing")
+	run("checkout", "main")
+
+	if err := os.WriteFile(filepath.Join(workDir, "app.go"), []byte("// new work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	poster := &GhPoster{TokenFile: tokenFile}
+	err := poster.PostReview(context.Background(), Request{
+		Workspace:    workDir,
+		Repo:         "org/repo",
+		Output:       OutputBranchCommit,
+		TargetBranch: "bot/existing",
+	}, &Result{Verdict: "COMMENT", Summary: "Should not reset existing branch"})
+	if err == nil || !strings.Contains(err.Error(), "switching to target branch") {
+		t.Fatalf("expected branch switch error instead of resetting existing local branch, got %v", err)
+	}
+
+	if gotSHA := run("rev-parse", "bot/existing"); gotSHA != wantSHA {
+		t.Fatalf("existing branch SHA changed from %s to %s", wantSHA, gotSHA)
+	}
+}
+
 func TestGhPosterBranchCommitRejectsWorkflowEdit(t *testing.T) {
 	_, workDir := initTestRepoWithBareRemote(t)
 	tokenFile := filepath.Join(t.TempDir(), "token")
