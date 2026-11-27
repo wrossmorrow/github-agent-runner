@@ -32,8 +32,9 @@ func (s *stubExecutor) Run(_ context.Context, _ review.Request, logOut io.Writer
 func TestHealthAndReviewStreaming(t *testing.T) {
 	mux := newMux(&stubExecutor{
 		outcome: &review.Outcome{
-			ExitCode: 1,
-			Turns:    3,
+			SessionID: "sess-uuid-1234",
+			ExitCode:  1,
+			Turns:     3,
 			Result: &review.Result{
 				Verdict: "REQUEST_CHANGES",
 				Summary: "Missing tests",
@@ -75,10 +76,32 @@ func TestHealthAndReviewStreaming(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(last, "AGENTRUNNER_RESULT=")), &trailer); err != nil {
 			t.Fatalf("unmarshal trailer: %v", err)
 		}
-		if trailer.ExitCode != 1 || trailer.Verdict != "REQUEST_CHANGES" || trailer.Findings != 1 {
+		if trailer.ExitCode != 1 || trailer.Verdict != "REQUEST_CHANGES" || trailer.Findings != 1 || trailer.SessionID != "sess-uuid-1234" {
 			t.Fatalf("unexpected trailer: %+v", trailer)
 		}
 	}
+
+	t.Run("error path preserves sessionId and turns in trailer", func(t *testing.T) {
+		mux := newMux(&stubExecutor{
+			outcome: &review.Outcome{SessionID: "sess-err-999", Turns: 2},
+			err:     fmt.Errorf("model timed out"),
+		}, v1alpha1.AgentModeReadOnly)
+
+		body := strings.NewReader(`{"workspace":"/home/runner/_work/repo","instructions":"check tests"}`)
+		req := httptest.NewRequest(http.MethodPost, "/run", body)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+		last := lines[len(lines)-1]
+		var trailer resultTrailer
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(last, "AGENTRUNNER_RESULT=")), &trailer); err != nil {
+			t.Fatalf("unmarshal error trailer: %v", err)
+		}
+		if trailer.ExitCode != 1 || trailer.SessionID != "sess-err-999" || trailer.Turns != 2 || !strings.Contains(trailer.Error, "model timed out") {
+			t.Fatalf("unexpected error trailer: %+v", trailer)
+		}
+	})
 }
 
 func TestUnsupportedModesReturn501(t *testing.T) {

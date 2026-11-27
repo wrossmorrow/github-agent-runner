@@ -28,6 +28,15 @@ func TestHelperPiReview(t *testing.T) {
 		if err := json.Unmarshal(sc.Bytes(), &cmd); err != nil {
 			continue
 		}
+		if cmd["type"] == "get_session_stats" {
+			_ = enc.Encode(map[string]any{
+				"type":    "response",
+				"id":      cmd["id"],
+				"success": true,
+				"data":    map[string]any{"totalTokens": 42},
+			})
+			continue
+		}
 		if cmd["type"] != "prompt" {
 			continue
 		}
@@ -286,8 +295,11 @@ func TestRunnerEndToEnd(t *testing.T) {
 	if outcome.ExitCode != 1 || outcome.Result.Verdict != "REQUEST_CHANGES" {
 		t.Fatalf("unexpected outcome: %+v", outcome)
 	}
-	if !poster.called || poster.req.PRNumber != 42 || poster.req.Repo != "org/repo" {
-		t.Fatalf("poster not called with enriched PR info: %+v", poster)
+	if outcome.SessionID == "" {
+		t.Fatal("expected generated SessionID on Outcome")
+	}
+	if !poster.called || poster.req.PRNumber != 42 || poster.req.Repo != "org/repo" || poster.req.SessionID != outcome.SessionID {
+		t.Fatalf("poster not called with enriched PR info & SessionID: %+v", poster)
 	}
 	if !strings.Contains(logs.String(), "::group::Tool: read") || !strings.Contains(logs.String(), "::endgroup::") {
 		t.Fatalf("expected ::group:: logs, got:\n%s", logs.String())
@@ -327,11 +339,14 @@ func TestWritePiConfigDir(t *testing.T) {
 			ContextWindow: 262144,
 			MaxTokens:     32768,
 		},
+		Attribution: map[string]string{
+			"sessionName": "x-custom-session-name",
+		},
 	}, Request{
 		Repo:     "my-org/my-repo",
 		RunID:    "999",
 		PRNumber: 17,
-	}, "base instructions", "secret-tok\n")
+	}, "base instructions", "secret-tok\n", "sess-uuid-42", "suggest", "my-org/my-repo#17")
 	if err != nil {
 		t.Fatalf("writePiConfigDir: %v", err)
 	}
@@ -360,7 +375,9 @@ func TestWritePiConfigDir(t *testing.T) {
 	if gw.Headers["Authorization"] != "Bearer secret-tok" {
 		t.Fatalf("unexpected Authorization header: %q", gw.Headers["Authorization"])
 	}
-	if gw.Headers["x-github-repo"] != "my-org/my-repo" || gw.Headers["x-github-pr"] != "17" {
+	if gw.Headers["x-github-repo"] != "my-org/my-repo" || gw.Headers["x-github-pr"] != "17" ||
+		gw.Headers["x-session-id"] != "sess-uuid-42" || gw.Headers["x-session-kind"] != "suggest" ||
+		gw.Headers["x-custom-session-name"] != "my-org/my-repo#17" {
 		t.Fatalf("unexpected attribution headers: %+v", gw.Headers)
 	}
 	if len(gw.Models) != 1 || gw.Models[0].ID != "flint" || gw.Models[0].Compat.MaxTokensField != "max_tokens" {
@@ -387,12 +404,15 @@ func TestRunnerModelErrorSurfaced(t *testing.T) {
 		},
 	}
 
-	_, err = runner.Run(context.Background(), Request{
+	outcome, err := runner.Run(context.Background(), Request{
 		Workspace:    t.TempDir(),
 		Instructions: "Check everything",
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("expected surfaced model error, got %v", err)
+	}
+	if outcome == nil || outcome.SessionID == "" {
+		t.Fatalf("expected non-empty SessionID on error outcome, got %+v", outcome)
 	}
 }
 
@@ -743,5 +763,30 @@ func TestRunnerWriteOutputRejectsDirtyWorkspace(t *testing.T) {
 	}, nil)
 	if nonGitErr == nil || !strings.Contains(nonGitErr.Error(), "checking workspace git status") {
 		t.Fatalf("expected git status failure before starting pi on non-git workspace, got %v", nonGitErr)
+	}
+}
+
+func TestBuildChildEnvStripsSidecarSecrets(t *testing.T) {
+	t.Setenv("SESSION_SINK_TOKEN", "sink-top-secret")
+	t.Setenv("AGENT_GATEWAY_TOKEN", "gateway-top-secret")
+
+	env := buildChildEnv(Config{Model: "gpt-test", Provider: "gateway"}, Request{Repo: "org/repo", RunID: "123"}, "/tmp/pi-dir")
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "SESSION_SINK_TOKEN=") || strings.HasPrefix(entry, "AGENT_GATEWAY_TOKEN=") {
+			t.Fatalf("child env leaked sidecar secret %q", entry)
+		}
+	}
+	foundDir := false
+	foundRepo := false
+	for _, entry := range env {
+		if entry == "PI_CODING_AGENT_DIR=/tmp/pi-dir" {
+			foundDir = true
+		}
+		if entry == "AGENT_GITHUB_REPO=org/repo" {
+			foundRepo = true
+		}
+	}
+	if !foundDir || !foundRepo {
+		t.Fatalf("expected PI_CODING_AGENT_DIR and AGENT_GITHUB_REPO in child env, got %v", env)
 	}
 }

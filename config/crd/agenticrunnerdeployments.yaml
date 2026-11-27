@@ -127,6 +127,20 @@ spec:
                       default: [main, master, HEAD]
                       items:
                         type: string
+                    sessionSink:
+                      type: object
+                      required: [endpoint]
+                      properties:
+                        endpoint:
+                          type: string
+                        authSecretRef:
+                          type: object
+                          required: [name]
+                          properties:
+                            name:
+                              type: string
+                            key:
+                              type: string
                     systemPromptRef:
                       type: object
                       required: [configMapName]

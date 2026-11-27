@@ -129,12 +129,13 @@ func newMux(exec reviewExecutor, mode string) http.Handler {
 }
 
 type resultTrailer struct {
-	ExitCode int    `json:"exitCode"`
-	Verdict  string `json:"verdict,omitempty"`
-	Summary  string `json:"summary,omitempty"`
-	Findings int    `json:"findings"`
-	Turns    int    `json:"turns"`
-	Error    string `json:"error,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
+	ExitCode  int    `json:"exitCode"`
+	Verdict   string `json:"verdict,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	Findings  int    `json:"findings"`
+	Turns     int    `json:"turns"`
+	Error     string `json:"error,omitempty"`
 }
 
 func handleRun(exec reviewExecutor, mode string) http.HandlerFunc {
@@ -184,14 +185,19 @@ func handleRun(exec reviewExecutor, mode string) http.HandlerFunc {
 		var trailer resultTrailer
 		if err != nil {
 			trailer = resultTrailer{ExitCode: 1, Error: err.Error()}
+			if outcome != nil {
+				trailer.SessionID = outcome.SessionID
+				trailer.Turns = outcome.Turns
+			}
 			_, _ = fmt.Fprintf(fw, "::error::%s\n", err.Error())
 		} else {
 			trailer = resultTrailer{
-				ExitCode: outcome.ExitCode,
-				Verdict:  outcome.Result.Verdict,
-				Summary:  outcome.Result.Summary,
-				Findings: len(outcome.Result.Comments),
-				Turns:    outcome.Turns,
+				SessionID: outcome.SessionID,
+				ExitCode:  outcome.ExitCode,
+				Verdict:   outcome.Result.Verdict,
+				Summary:   outcome.Result.Summary,
+				Findings:  len(outcome.Result.Comments),
+				Turns:     outcome.Turns,
 			}
 			_, _ = fmt.Fprintf(fw, "\nSummary (%s): %s\n", outcome.Result.Verdict, outcome.Result.Summary)
 		}
