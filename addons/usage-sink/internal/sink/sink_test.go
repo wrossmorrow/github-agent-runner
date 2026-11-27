@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -177,5 +178,54 @@ func TestDuckDBSinkIdempotentAndFlushPrune(t *testing.T) {
 	}
 	if gotKind != "review" || gotRepo != "org/repo" || gotReasoning != 12 {
 		t.Fatalf("unexpected migrated values on new-id: kind=%q repo=%q reasoning=%d", gotKind, gotRepo, gotReasoning)
+	}
+}
+
+type stubSink struct {
+	writeErr error
+	flushErr error
+	closeErr error
+	writes   int
+	flushes  int
+	closes   int
+}
+
+func (s *stubSink) Write(context.Context, als.UsageRecord) error {
+	s.writes++
+	return s.writeErr
+}
+
+func (s *stubSink) Flush(context.Context) error {
+	s.flushes++
+	return s.flushErr
+}
+
+func (s *stubSink) Close(context.Context) error {
+	s.closes++
+	return s.closeErr
+}
+
+func TestMultiSinkFanOutAndErrorAggregation(t *testing.T) {
+	errWrite := errors.New("write boom")
+	errFlush := errors.New("flush boom")
+	errClose := errors.New("close boom")
+
+	failing := &stubSink{writeErr: errWrite, flushErr: errFlush, closeErr: errClose}
+	healthy := &stubSink{}
+	multi := NewMultiSink(failing, healthy)
+
+	ctx := context.Background()
+	if err := multi.Write(ctx, als.UsageRecord{ResponseID: "r1"}); !errors.Is(err, errWrite) {
+		t.Fatalf("Write error = %v, want %v", err, errWrite)
+	}
+	if err := multi.Flush(ctx); !errors.Is(err, errFlush) {
+		t.Fatalf("Flush error = %v, want %v", err, errFlush)
+	}
+	if err := multi.Close(ctx); !errors.Is(err, errClose) {
+		t.Fatalf("Close error = %v, want %v", err, errClose)
+	}
+
+	if healthy.writes != 1 || healthy.flushes != 1 || healthy.closes != 1 {
+		t.Fatalf("expected healthy sink to receive all calls despite earlier errors, got %+v", healthy)
 	}
 }

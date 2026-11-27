@@ -197,3 +197,35 @@ func TestStreamAccessLogsEndToEnd(t *testing.T) {
 		t.Fatalf("unexpected response IDs: %+v", cw.records)
 	}
 }
+
+type blockingWriter struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingWriter) Write(ctx context.Context, _ UsageRecord) error {
+	b.once.Do(func() { close(b.started) })
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestServerCloseCancelsBlockedWorker(t *testing.T) {
+	bw := &blockingWriter{started: make(chan struct{})}
+	srv := NewServer(bw, false, 4, nil, nil)
+	srv.enqueue(UsageRecord{ResponseID: "blocked-1"})
+
+	<-bw.started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := srv.Close(ctx); err == nil {
+		t.Fatal("expected deadline error from Close while worker blocked")
+	}
+
+	// Ensure runWorker exits promptly once Close cancels s.workerCtx.
+	select {
+	case <-srv.done:
+	case <-time.After(time.Second):
+		t.Fatal("expected runWorker to exit after workerCtx cancellation")
+	}
+}

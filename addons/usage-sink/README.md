@@ -93,6 +93,31 @@ spec:
       type: TotalToken
 ```
 
+### 4. Network Exposure (`NetworkPolicy`)
+The `:50051` gRPC (h2c) listener accepts unauthenticated `StreamAccessLogs` traffic, and `:9090` exposes `/metrics`. In Kubernetes clusters, restrict ingress so only Envoy proxy pods in `ai-gateway` can reach `:50051`:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: usage-sink-ingress
+  namespace: ai-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app: usage-sink
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              gateway.envoyproxy.io/owning-gateway-namespace: ai-gateway
+      ports:
+        - protocol: TCP
+          port: 50051
+```
+
 ---
 
 ## Local Development & Image Build

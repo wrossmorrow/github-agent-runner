@@ -62,11 +62,13 @@ type Server struct {
 	logger        *slog.Logger
 	metrics       *Metrics
 
-	queue     chan UsageRecord
-	done      chan struct{}
-	closeOnce sync.Once
-	mu        sync.RWMutex
-	closed    bool
+	queue        chan UsageRecord
+	done         chan struct{}
+	workerCtx    context.Context
+	workerCancel context.CancelFunc
+	closeOnce    sync.Once
+	mu           sync.RWMutex
+	closed       bool
 }
 
 // NewServer constructs an Envoy AccessLogService gRPC handler backed by an async queue
@@ -78,6 +80,7 @@ func NewServer(writer Writer, onlyAIGateway bool, bufferSize int, logger *slog.L
 	if logger == nil {
 		logger = slog.Default()
 	}
+	workerCtx, workerCancel := context.WithCancel(context.Background())
 	s := &Server{
 		writer:        writer,
 		onlyAIGateway: onlyAIGateway,
@@ -85,6 +88,8 @@ func NewServer(writer Writer, onlyAIGateway bool, bufferSize int, logger *slog.L
 		metrics:       metrics,
 		queue:         make(chan UsageRecord, bufferSize),
 		done:          make(chan struct{}),
+		workerCtx:     workerCtx,
+		workerCancel:  workerCancel,
 	}
 	go s.runWorker()
 	return s
@@ -96,7 +101,7 @@ func (s *Server) runWorker() {
 		if s.writer == nil {
 			continue
 		}
-		if err := s.writer.Write(context.Background(), rec); err != nil {
+		if err := s.writer.Write(s.workerCtx, rec); err != nil {
 			s.logger.Warn("failed to write usage record", slog.String("response_id", rec.ResponseID), slog.Any("error", err))
 			if s.metrics != nil {
 				s.metrics.Errors.Inc()
@@ -165,8 +170,10 @@ func (s *Server) Close(ctx context.Context) error {
 	})
 	select {
 	case <-s.done:
+		s.workerCancel()
 		return nil
 	case <-ctx.Done():
+		s.workerCancel()
 		return ctx.Err()
 	}
 }
