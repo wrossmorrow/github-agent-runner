@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,17 +12,11 @@ import (
 	"strings"
 )
 
-var protectedBranchNames = map[string]struct{}{
-	"main":       {},
-	"master":     {},
-	"develop":    {},
-	"production": {},
-	"release":    {},
-	"head":       {},
-}
+// DefaultProtectedBranches lists branch names rejected by default unless overridden on GhPoster.ProtectedBranches.
+var DefaultProtectedBranches = []string{"main", "master", "HEAD"}
 
 // validateTargetBranch ensures the push target is a safe, non-protected branch ref name.
-func validateTargetBranch(branch string) (string, error) {
+func validateTargetBranch(branch string, protected []string) (string, error) {
 	b := strings.TrimSpace(branch)
 	b = strings.TrimPrefix(b, "refs/heads/")
 	if b == "" {
@@ -33,8 +28,16 @@ func validateTargetBranch(branch string) (string, error) {
 	if strings.ContainsAny(b, " \t\n\r~^:?*[\\") || strings.Contains(b, "..") || strings.Contains(b, "@{") || strings.Contains(b, "//") {
 		return "", fmt.Errorf("invalid target branch %q", branch)
 	}
-	if _, protected := protectedBranchNames[strings.ToLower(b)]; protected {
-		return "", fmt.Errorf("refusing to push to protected branch %q", b)
+	branches := protected
+	if branches == nil {
+		branches = DefaultProtectedBranches
+	}
+	lowerTarget := strings.ToLower(b)
+	for _, entry := range branches {
+		trimmed := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(entry), "refs/heads/"))
+		if trimmed != "" && trimmed == lowerTarget {
+			return "", fmt.Errorf("refusing to push to protected branch %q", b)
+		}
 	}
 	return b, nil
 }
@@ -112,16 +115,21 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 				shortSHA = "latest"
 			}
 			branchSpec = "bot/revert-" + shortSHA
+		} else if headRef := strings.TrimSpace(req.HeadRef); headRef != "" {
+			branchSpec = headRef
 		} else {
 			out, err := runGit(ctx, req.Workspace, "", "rev-parse", "--abbrev-ref", "HEAD")
 			if err != nil {
 				return fmt.Errorf("resolving current branch: %w", err)
 			}
 			branchSpec = strings.TrimSpace(string(out))
+			if branchSpec == "HEAD" {
+				return fmt.Errorf("workspace is in detached HEAD state; set target branch explicitly")
+			}
 		}
 	}
 
-	branch, err := validateTargetBranch(branchSpec)
+	branch, err := validateTargetBranch(branchSpec, p.ProtectedBranches)
 	if err != nil {
 		return err
 	}
@@ -181,6 +189,13 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 	}
 
 	if req.Output == OutputRevertPR || req.OpenPR {
+		exists, err := hasOpenPR(ctx, ghBin, token, req.Repo, branch)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
 		base := strings.TrimSpace(req.BaseRef)
 		if base == "" {
 			base = "main"
@@ -199,6 +214,28 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 		}
 	}
 	return nil
+}
+
+func hasOpenPR(ctx context.Context, ghBin, token, repo, headBranch string) (bool, error) {
+	args := []string{
+		"pr", "list",
+		"--repo", repo,
+		"--head", headBranch,
+		"--state", "open",
+		"--json", "number",
+		"--limit", "1",
+	}
+	out, err := runGH(ctx, ghBin, token, args, nil)
+	if err != nil {
+		return false, err
+	}
+	var prs []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return false, fmt.Errorf("parsing open PR check for %q: %w", headBranch, err)
+	}
+	return len(prs) > 0, nil
 }
 
 func runGit(ctx context.Context, workspace, githubToken string, args ...string) ([]byte, error) {

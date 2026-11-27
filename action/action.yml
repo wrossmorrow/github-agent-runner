@@ -11,7 +11,7 @@ inputs:
     description: Output target (pr-review | suggest | comment | issue-comment | release-draft | branch-commit | revert-pr | stdout)
     default: pr-review
   branch:
-    description: Target branch for branch-commit / revert-pr output (must not be protected)
+    description: Target branch for branch-commit / revert-pr (defaults to PR head/current branch for branch-commit, bot/revert-<short-sha> for revert-pr; required in detached-HEAD non-PR runs)
     default: ""
   open-pr:
     description: Open a pull request after pushing for branch-commit output (true | false)

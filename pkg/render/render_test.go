@@ -333,3 +333,58 @@ func TestRenderModeEgressAndServiceAccount(t *testing.T) {
 		t.Fatalf("AGENTRUNNER_MODE = %q, want %q", agentMode, v1alpha1.AgentModeSuggest)
 	}
 }
+
+func TestRenderProtectedBranches(t *testing.T) {
+	t.Run("omitted stays nil in config.json", func(t *testing.T) {
+		dep, tc := sampleInputs()
+		bundle, err := Render(dep, tc, Options{})
+		if err != nil {
+			t.Fatalf("Render failed: %v", err)
+		}
+		var rtCfg AgentRuntimeConfig
+		if err := json.Unmarshal([]byte(bundle.AgentConfigMap["data"].(map[string]string)["config.json"]), &rtCfg); err != nil {
+			t.Fatalf("unmarshal config.json: %v", err)
+		}
+		if rtCfg.ProtectedBranches != nil {
+			t.Fatalf("expected omitted ProtectedBranches to stay nil, got %v", *rtCfg.ProtectedBranches)
+		}
+	})
+
+	t.Run("custom list is preserved in config.json", func(t *testing.T) {
+		dep, tc := sampleInputs()
+		custom := []string{"main", "release"}
+		dep.Spec.Agent.ProtectedBranches = &custom
+		bundle, err := Render(dep, tc, Options{})
+		if err != nil {
+			t.Fatalf("Render failed: %v", err)
+		}
+		var rtCfg AgentRuntimeConfig
+		if err := json.Unmarshal([]byte(bundle.AgentConfigMap["data"].(map[string]string)["config.json"]), &rtCfg); err != nil {
+			t.Fatalf("unmarshal config.json: %v", err)
+		}
+		if rtCfg.ProtectedBranches == nil || len(*rtCfg.ProtectedBranches) != 2 || (*rtCfg.ProtectedBranches)[1] != "release" {
+			t.Fatalf("expected custom protectedBranches, got %+v", rtCfg.ProtectedBranches)
+		}
+	})
+
+	t.Run("explicit empty slice renders empty JSON array", func(t *testing.T) {
+		dep, tc := sampleInputs()
+		empty := []string{}
+		dep.Spec.Agent.ProtectedBranches = &empty
+		bundle, err := Render(dep, tc, Options{})
+		if err != nil {
+			t.Fatalf("Render failed: %v", err)
+		}
+		cfgJSON := bundle.AgentConfigMap["data"].(map[string]string)["config.json"]
+		if !strings.Contains(cfgJSON, `"protectedBranches": []`) {
+			t.Fatalf("expected explicit empty protectedBranches array in config.json, got:\n%s", cfgJSON)
+		}
+		var rtCfg AgentRuntimeConfig
+		if err := json.Unmarshal([]byte(cfgJSON), &rtCfg); err != nil {
+			t.Fatalf("unmarshal config.json: %v", err)
+		}
+		if rtCfg.ProtectedBranches == nil || len(*rtCfg.ProtectedBranches) != 0 {
+			t.Fatalf("expected empty non-nil ProtectedBranches slice, got %+v", rtCfg.ProtectedBranches)
+		}
+	})
+}

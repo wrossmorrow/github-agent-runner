@@ -10,14 +10,34 @@ import (
 )
 
 func TestValidateTargetBranch(t *testing.T) {
-	for _, okBranch := range []string{"bot/fix-1", "agent/revert-abc123", "feat/add-tests"} {
-		if got, err := validateTargetBranch(okBranch); err != nil || got != okBranch {
-			t.Errorf("validateTargetBranch(%q) = (%q, %v), want (%q, nil)", okBranch, got, err, okBranch)
+	for _, okBranch := range []string{"bot/fix-1", "agent/revert-abc123", "feat/add-tests", "develop", "release"} {
+		if got, err := validateTargetBranch(okBranch, nil); err != nil || got != okBranch {
+			t.Errorf("validateTargetBranch(%q, nil) = (%q, %v), want (%q, nil)", okBranch, got, err, okBranch)
 		}
 	}
-	for _, bad := range []string{"", "main", "master", "refs/heads/main", "HEAD", "develop", "production", "release", "--force", "feat..bar", "has space", "feat/tail/"} {
-		if _, err := validateTargetBranch(bad); err == nil {
-			t.Errorf("validateTargetBranch(%q) succeeded, expected error", bad)
+	for _, bad := range []string{"", "main", "master", "refs/heads/main", "HEAD", "--force", "feat..bar", "has space", "feat/tail/"} {
+		if _, err := validateTargetBranch(bad, nil); err == nil {
+			t.Errorf("validateTargetBranch(%q, nil) succeeded, expected error", bad)
+		}
+	}
+
+	custom := []string{"release", "production"}
+	if got, err := validateTargetBranch("main", custom); err != nil || got != "main" {
+		t.Errorf("validateTargetBranch(\"main\", custom) = (%q, %v), want (\"main\", nil)", got, err)
+	}
+	for _, bad := range []string{"release", "production"} {
+		if _, err := validateTargetBranch(bad, custom); err == nil {
+			t.Errorf("validateTargetBranch(%q, custom) succeeded, expected error", bad)
+		}
+	}
+
+	noneProtected := []string{}
+	if got, err := validateTargetBranch("main", noneProtected); err != nil || got != "main" {
+		t.Errorf("validateTargetBranch(\"main\", []string{}) = (%q, %v), want (\"main\", nil)", got, err)
+	}
+	for _, bad := range []string{"--force", "feat..bar"} {
+		if _, err := validateTargetBranch(bad, noneProtected); err == nil {
+			t.Errorf("validateTargetBranch(%q, []string{}) succeeded, expected ref syntax error", bad)
 		}
 	}
 }
@@ -33,6 +53,55 @@ func TestValidateChangedPaths(t *testing.T) {
 		if err := validateChangedPaths([]string{"pkg/a.go", bad}); err == nil {
 			t.Errorf("validateChangedPaths(%q) succeeded, expected blocked path error", bad)
 		}
+	}
+}
+
+func TestParsePorcelainZRenamesAndBlockedPaths(t *testing.T) {
+	cases := []struct {
+		name        string
+		porcelain   string
+		wantPaths   []string
+		wantBlocked bool
+	}{
+		{
+			name:        "rename into workflow directory",
+			porcelain:   "R  .github/workflows/ci.yml\x00safe.go\x00",
+			wantPaths:   []string{".github/workflows/ci.yml", "safe.go"},
+			wantBlocked: true,
+		},
+		{
+			name:        "rename out of workflow directory",
+			porcelain:   "R  safe.go\x00.github/workflows/ci.yml\x00",
+			wantPaths:   []string{"safe.go", ".github/workflows/ci.yml"},
+			wantBlocked: true,
+		},
+		{
+			name:        "copy followed by safe modification preserves subsequent token",
+			porcelain:   "C  copy.go\x00src.go\x00M  other.go\x00",
+			wantPaths:   []string{"copy.go", "src.go", "other.go"},
+			wantBlocked: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parsePorcelainZ(tc.porcelain)
+			if len(got) != len(tc.wantPaths) {
+				t.Fatalf("parsePorcelainZ() = %v, want %v", got, tc.wantPaths)
+			}
+			for i := range tc.wantPaths {
+				if got[i] != tc.wantPaths[i] {
+					t.Fatalf("parsePorcelainZ()[%d] = %q, want %q (all: %v)", i, got[i], tc.wantPaths[i], got)
+				}
+			}
+			err := validateChangedPaths(got)
+			if tc.wantBlocked && err == nil {
+				t.Fatalf("expected validateChangedPaths(%v) to reject blocked path", got)
+			}
+			if !tc.wantBlocked && err != nil {
+				t.Fatalf("expected validateChangedPaths(%v) to pass, got %v", got, err)
+			}
+		})
 	}
 }
 
@@ -139,7 +208,7 @@ func TestGhPosterRevertPROpensPR(t *testing.T) {
 	}
 	argsFile := filepath.Join(dir, "gh-args.txt")
 	ghScript := filepath.Join(dir, "fake-gh.sh")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"" + argsFile + "\"\n"
+	script := "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> \"" + argsFile + "\"\n"
 	if err := os.WriteFile(ghScript, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -178,4 +247,109 @@ func TestGhPosterRevertPROpensPR(t *testing.T) {
 			t.Fatalf("expected %q in gh pr create args, got %q", want, ghArgs)
 		}
 	}
+}
+
+func TestGhPosterOpenPRSkipsCreateWhenExistingOpenPR(t *testing.T) {
+	bareDir, workDir := initTestRepoWithBareRemote(t)
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argsFile := filepath.Join(dir, "gh-args.txt")
+	ghScript := filepath.Join(dir, "fake-gh.sh")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"" + argsFile + "\"\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[{\"number\":42}]\\n'\n  exit 0\nfi\necho \"unexpected gh call: $*\" >&2\nexit 1\n"
+	if err := os.WriteFile(ghScript, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(workDir, "app.go"), []byte("// fix attempt 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	poster := &GhPoster{TokenFile: tokenFile, GHBin: ghScript}
+	err := poster.PostReview(context.Background(), Request{
+		Workspace:    workDir,
+		Repo:         "org/repo",
+		Output:       OutputBranchCommit,
+		TargetBranch: "bot/fix-42",
+		OpenPR:       true,
+	}, &Result{
+		Verdict: "COMMENT",
+		Title:   "fix: retry update",
+		Summary: "Updated existing PR branch.",
+	})
+	if err != nil {
+		t.Fatalf("expected existing PR check to succeed without gh pr create, got: %v", err)
+	}
+
+	if out, err := exec.Command("git", "-C", bareDir, "rev-parse", "--verify", "refs/heads/bot/fix-42").CombinedOutput(); err != nil {
+		t.Fatalf("expected branch on bare remote: %v (%s)", err, string(out))
+	}
+	ghArgsRaw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(ghArgsRaw), "pr create") {
+		t.Fatalf("did not expect gh pr create when open PR already exists; calls:\n%s", string(ghArgsRaw))
+	}
+}
+
+func TestGhPosterDetachedHEADResolution(t *testing.T) {
+	t.Run("uses hydrated HeadRef in detached HEAD checkout", func(t *testing.T) {
+		bareDir, workDir := initTestRepoWithBareRemote(t)
+		cmd := exec.Command("git", "-C", workDir, "checkout", "--detach", "HEAD")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git checkout --detach failed: %v\n%s", err, string(out))
+		}
+
+		tokenFile := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(tokenFile, []byte(""), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(workDir, "app.go"), []byte("package app\n\nfunc FromPRHead() {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		poster := &GhPoster{TokenFile: tokenFile}
+		err := poster.PostReview(context.Background(), Request{
+			Workspace: workDir,
+			Repo:      "org/repo",
+			Output:    OutputBranchCommit,
+			HeadRef:   "feat/pr-head-fix",
+		}, &Result{Verdict: "APPROVE", Summary: "Applied fix on PR head branch."})
+		if err != nil {
+			t.Fatalf("expected detached HEAD with HeadRef to push to feat/pr-head-fix, got: %v", err)
+		}
+
+		if out, err := exec.Command("git", "-C", bareDir, "rev-parse", "--verify", "refs/heads/feat/pr-head-fix").CombinedOutput(); err != nil {
+			t.Fatalf("expected refs/heads/feat/pr-head-fix on bare remote: %v (%s)", err, string(out))
+		}
+	})
+
+	t.Run("fails clearly on detached HEAD without HeadRef or TargetBranch", func(t *testing.T) {
+		_, workDir := initTestRepoWithBareRemote(t)
+		cmd := exec.Command("git", "-C", workDir, "checkout", "--detach", "HEAD")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git checkout --detach failed: %v\n%s", err, string(out))
+		}
+
+		tokenFile := filepath.Join(t.TempDir(), "token")
+		if err := os.WriteFile(tokenFile, []byte(""), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(workDir, "app.go"), []byte("// change\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		poster := &GhPoster{TokenFile: tokenFile}
+		err := poster.PostReview(context.Background(), Request{
+			Workspace: workDir,
+			Repo:      "org/repo",
+			Output:    OutputBranchCommit,
+		}, &Result{Verdict: "COMMENT", Summary: "Attempt without branch"})
+		if err == nil || !strings.Contains(err.Error(), "detached HEAD") {
+			t.Fatalf("expected detached HEAD error, got %v", err)
+		}
+	})
 }

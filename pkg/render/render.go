@@ -118,13 +118,14 @@ func (b *Bundle) List() K8sObject {
 // AgentRuntimeConfig is the JSON structure written to /etc/agentrunner/config.json
 // and read by agentrunnerd inside the agent sidecar.
 type AgentRuntimeConfig struct {
-	Harness         string              `json:"harness"`
-	Mode            string              `json:"mode,omitempty"`
-	Provider        string              `json:"provider,omitempty"`
-	Model           string              `json:"model"`
-	GatewayEndpoint string              `json:"gatewayEndpoint"`
-	Limits          v1alpha1.LimitsSpec `json:"limits,omitempty"`
-	Attribution     map[string]string   `json:"attributionHeaders,omitempty"`
+	Harness           string              `json:"harness"`
+	Mode              string              `json:"mode,omitempty"`
+	Provider          string              `json:"provider,omitempty"`
+	Model             string              `json:"model"`
+	GatewayEndpoint   string              `json:"gatewayEndpoint"`
+	Limits            v1alpha1.LimitsSpec `json:"limits,omitempty"`
+	ProtectedBranches *[]string           `json:"protectedBranches,omitempty"`
+	Attribution       map[string]string   `json:"attributionHeaders,omitempty"`
 }
 
 func effectiveMode(dep *v1alpha1.AgenticRunnerDeployment) string {
@@ -183,12 +184,13 @@ func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Age
 		harness = "pi"
 	}
 	cfg := AgentRuntimeConfig{
-		Harness:         harness,
-		Mode:            effectiveMode(dep),
-		Provider:        dep.Spec.Agent.Provider,
-		Model:           dep.Spec.Agent.Model,
-		GatewayEndpoint: dep.Spec.Agent.Gateway.Endpoint,
-		Limits:          dep.Spec.Agent.Limits,
+		Harness:           harness,
+		Mode:              effectiveMode(dep),
+		Provider:          dep.Spec.Agent.Provider,
+		Model:             dep.Spec.Agent.Model,
+		GatewayEndpoint:   dep.Spec.Agent.Gateway.Endpoint,
+		Limits:            dep.Spec.Agent.Limits,
+		ProtectedBranches: dep.Spec.Agent.ProtectedBranches,
 		Attribution: map[string]string{
 			"sessionId": "x-session-id",
 			"repo":      "x-github-repo",

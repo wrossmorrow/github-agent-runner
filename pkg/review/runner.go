@@ -33,15 +33,16 @@ Do not run any more tools. Respond with ONLY a single valid JSON object matching
 
 // Config holds runtime settings loaded by agentrunnerd from /etc/agentrunner/config.json.
 type Config struct {
-	PiBin           string              `json:"piBin,omitempty"`
-	PiArgs          []string            `json:"piArgs,omitempty"`
-	Harness         string              `json:"harness"`
-	Mode            string              `json:"mode,omitempty"`
-	Provider        string              `json:"provider,omitempty"`
-	Model           string              `json:"model"`
-	GatewayEndpoint string              `json:"gatewayEndpoint"`
-	Limits          v1alpha1.LimitsSpec `json:"limits,omitempty"`
-	AgentsDirs      []string            `json:"agentsDirs,omitempty"`
+	PiBin             string              `json:"piBin,omitempty"`
+	PiArgs            []string            `json:"piArgs,omitempty"`
+	Harness           string              `json:"harness"`
+	Mode              string              `json:"mode,omitempty"`
+	Provider          string              `json:"provider,omitempty"`
+	Model             string              `json:"model"`
+	GatewayEndpoint   string              `json:"gatewayEndpoint"`
+	Limits            v1alpha1.LimitsSpec `json:"limits,omitempty"`
+	AgentsDirs        []string            `json:"agentsDirs,omitempty"`
+	ProtectedBranches *[]string           `json:"protectedBranches,omitempty"`
 }
 
 // Runner executes a single headless review against `pi --mode rpc`.

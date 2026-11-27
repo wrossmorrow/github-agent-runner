@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -36,9 +37,17 @@ func main() {
 		log.Fatalf("loading config: %v", err)
 	}
 
+	var protectedBranches []string
+	if cfg.ProtectedBranches != nil {
+		protectedBranches = *cfg.ProtectedBranches
+	}
+
 	runner := &review.Runner{
 		Config: cfg,
-		Poster: &review.GhPoster{TokenFile: tokenFile},
+		Poster: &review.GhPoster{
+			TokenFile:         tokenFile,
+			ProtectedBranches: protectedBranches,
+		},
 	}
 
 	srv := &http.Server{
@@ -71,9 +80,7 @@ func loadConfig(path string) (review.Config, error) {
 	}
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		if envMode := os.Getenv("AGENTRUNNER_MODE"); envMode != "" {
-			cfg.Mode = envMode
-		}
+		applyConfigEnvOverrides(&cfg)
 		return cfg, nil
 	}
 	if err != nil {
@@ -85,13 +92,26 @@ func loadConfig(path string) (review.Config, error) {
 	if cfg.Mode == "" {
 		cfg.Mode = v1alpha1.AgentModeReadOnly
 	}
-	if envMode := os.Getenv("AGENTRUNNER_MODE"); envMode != "" {
-		cfg.Mode = envMode
-	}
 	if len(cfg.AgentsDirs) == 0 {
 		cfg.AgentsDirs = []string{"/opt/agents", "/etc/agentrunner/prompts", "/etc/agentrunner"}
 	}
+	applyConfigEnvOverrides(&cfg)
 	return cfg, nil
+}
+
+func applyConfigEnvOverrides(cfg *review.Config) {
+	if envMode := os.Getenv("AGENTRUNNER_MODE"); envMode != "" {
+		cfg.Mode = envMode
+	}
+	if rawBranches, ok := os.LookupEnv("AGENTRUNNER_PROTECTED_BRANCHES"); ok {
+		branches := make([]string, 0)
+		for _, part := range strings.Split(rawBranches, ",") {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				branches = append(branches, trimmed)
+			}
+		}
+		cfg.ProtectedBranches = &branches
+	}
 }
 
 func newMux(exec reviewExecutor, mode string) http.Handler {

@@ -104,7 +104,22 @@ func TestDeploymentValidate(t *testing.T) {
 		t.Fatalf("expected maxTransportRetries=0 to be valid, got %v", err)
 	}
 
+	customProtected := []string{"main", "release"}
+	withCustomProtected := validDeployment()
+	withCustomProtected.Spec.Agent.ProtectedBranches = &customProtected
+	if err := withCustomProtected.Validate(); err != nil {
+		t.Fatalf("expected custom protectedBranches to be valid, got %v", err)
+	}
+
+	emptyProtected := []string{}
+	withEmptyProtected := validDeployment()
+	withEmptyProtected.Spec.Agent.ProtectedBranches = &emptyProtected
+	if err := withEmptyProtected.Validate(); err != nil {
+		t.Fatalf("expected empty protectedBranches slice to be valid, got %v", err)
+	}
+
 	negRetries := -1
+	badProtected := []string{"main", "bad branch"}
 	cases := []struct {
 		name    string
 		mutate  func(*AgenticRunnerDeployment)
@@ -217,6 +232,19 @@ func TestDeploymentValidate(t *testing.T) {
 			name:    "negative maxTransportRetries",
 			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Agent.Limits.MaxTransportRetries = &negRetries },
 			wantErr: "maxTransportRetries",
+		},
+		{
+			name:    "invalid protectedBranches entry with whitespace",
+			mutate:  func(d *AgenticRunnerDeployment) { d.Spec.Agent.ProtectedBranches = &badProtected },
+			wantErr: "protectedBranches",
+		},
+		{
+			name: "blank protectedBranches entry",
+			mutate: func(d *AgenticRunnerDeployment) {
+				blank := []string{"   "}
+				d.Spec.Agent.ProtectedBranches = &blank
+			},
+			wantErr: "protectedBranches",
 		},
 	}
 

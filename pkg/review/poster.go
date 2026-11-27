@@ -56,6 +56,9 @@ type Poster interface {
 type GhPoster struct {
 	TokenFile string
 	GHBin     string
+	// ProtectedBranches overrides DefaultProtectedBranches (main, master, HEAD) when non-nil;
+	// an explicit empty slice disables the local branch-name denylist while keeping ref-syntax validation.
+	ProtectedBranches []string
 }
 
 // PostReview submits the structured Result to GitHub as a PR review or comment.

@@ -122,6 +122,11 @@ spec:
                       type: array
                       items:
                         type: string
+                    protectedBranches:
+                      type: array
+                      default: [main, master, HEAD]
+                      items:
+                        type: string
                     systemPromptRef:
                       type: object
                       required: [configMapName]

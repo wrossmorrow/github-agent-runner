@@ -17,6 +17,7 @@ type Request struct {
 	IssueNumber    int    `json:"issueNumber,omitempty"`
 	WorkflowRunID  int64  `json:"workflowRunId,omitempty"`
 	BaseRef        string `json:"baseRef,omitempty"`
+	HeadRef        string `json:"headRef,omitempty"`
 	HeadSHA        string `json:"headSha,omitempty"`
 	TargetBranch   string `json:"targetBranch,omitempty"`
 	OpenPR         bool   `json:"openPr,omitempty"`
