@@ -122,7 +122,7 @@ func handleRun(exec reviewExecutor, mode string) http.HandlerFunc {
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch effectiveMode {
-		case v1alpha1.AgentModeReadOnly, v1alpha1.AgentModeSuggest:
+		case v1alpha1.AgentModeReadOnly, v1alpha1.AgentModeSuggest, v1alpha1.AgentModeWriteBranch:
 		default:
 			http.Error(w, fmt.Sprintf("agent mode %q is not yet implemented", effectiveMode), http.StatusNotImplemented)
 			return
@@ -142,6 +142,10 @@ func handleRun(exec reviewExecutor, mode string) http.HandlerFunc {
 				status = http.StatusNotImplemented
 			}
 			http.Error(w, err.Error(), status)
+			return
+		}
+		if review.IsWriteOutput(req.Output) && effectiveMode != v1alpha1.AgentModeWriteBranch {
+			http.Error(w, fmt.Sprintf("output %q requires agent mode %q (current mode: %q)", req.Output, v1alpha1.AgentModeWriteBranch, effectiveMode), http.StatusForbidden)
 			return
 		}
 

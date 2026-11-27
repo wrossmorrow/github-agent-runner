@@ -10,7 +10,7 @@ type Request struct {
 	EventName      string `json:"eventName,omitempty"`
 	Instructions   string `json:"instructions"`
 	FailOn         string `json:"failOn,omitempty"` // none | warning | error
-	Output         string `json:"output,omitempty"` // pr-review | comment | issue-comment | stdout
+	Output         string `json:"output,omitempty"` // pr-review | suggest | comment | issue-comment | release-draft | branch-commit | revert-pr | stdout
 	Repo           string `json:"repo,omitempty"`
 	RunID          string `json:"runId,omitempty"`
 	PRNumber       int    `json:"prNumber,omitempty"`
@@ -18,6 +18,8 @@ type Request struct {
 	WorkflowRunID  int64  `json:"workflowRunId,omitempty"`
 	BaseRef        string `json:"baseRef,omitempty"`
 	HeadSHA        string `json:"headSha,omitempty"`
+	TargetBranch   string `json:"targetBranch,omitempty"`
+	OpenPR         bool   `json:"openPr,omitempty"`
 	Tag            string `json:"tag,omitempty"`
 	Environment    string `json:"environment,omitempty"`
 	EnvironmentURL string `json:"environmentUrl,omitempty"`

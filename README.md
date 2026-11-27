@@ -135,7 +135,9 @@ jobs:
 | :--- | :--- | :--- |
 | `instructions` | *(required)* | Task prompt passed to the agent (e.g. review criteria, check rules) |
 | `fail-on` | `error` | Fail the check when any finding meets severity (`none` \| `warning` \| `error`) |
-| `output` | `pr-review` | Where to publish results (`pr-review` \| `suggest` \| `comment` \| `issue-comment` \| `release-draft` \| `stdout`); `issue-comment` requires `Issues: Read & write` and `release-draft` requires `Contents: Read & write` (with branch/tag protection) on the GitHub App |
+| `output` | `pr-review` | Where to publish results (`pr-review` \| `suggest` \| `comment` \| `issue-comment` \| `release-draft` \| `branch-commit` \| `revert-pr` \| `stdout`); `issue-comment` requires `Issues: R/W`, `release-draft` requires `Contents: R/W`, and `branch-commit`/`revert-pr` require `spec.agent.mode: write-branch` + a separate App (`Contents: R/W`, `Pull requests: R/W`, no `Workflows`) |
+| `branch` | `""` | Target branch for `branch-commit` / `revert-pr` output (protected branches are rejected) |
+| `open-pr` | `"false"` | Open a pull request after pushing for `branch-commit` output (`true` \| `false`) |
 | `tag` | `""` | Git tag name for `release-draft` output (defaults to `GITHUB_REF_NAME` on tag pushes) |
 | `endpoint` | `http://127.0.0.1:8788/run` | Local `agentrunnerd` sidecar HTTP endpoint (`POST /run` and backwards-compatible alias `POST /review`) |
 

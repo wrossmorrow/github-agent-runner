@@ -104,24 +104,68 @@ func TestUnsupportedModesReturn501(t *testing.T) {
 		}
 	})
 
-	for _, mode := range []string{v1alpha1.AgentModeWriteBranch, "unknown-mode"} {
-		t.Run(mode, func(t *testing.T) {
-			exec := &stubExecutor{}
-			mux := newMux(exec, mode)
+	t.Run("write-branch mode allowed", func(t *testing.T) {
+		exec := &stubExecutor{
+			outcome: &review.Outcome{
+				ExitCode: 0,
+				Turns:    2,
+				Result:   &review.Result{Verdict: "APPROVE", Summary: "Committed fix"},
+			},
+		}
+		mux := newMux(exec, v1alpha1.AgentModeWriteBranch)
+		body := strings.NewReader(`{"workspace":"/home/runner/_work/repo","instructions":"fix tests","output":"branch-commit"}`)
+		req := httptest.NewRequest(http.MethodPost, "/run", body)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
 
-			body := strings.NewReader(`{"workspace":"/home/runner/_work/repo","instructions":"check tests"}`)
-			req := httptest.NewRequest(http.MethodPost, "/review", body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("write-branch status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if !exec.called {
+			t.Fatal("expected executor to run in write-branch mode")
+		}
+	})
+
+	for _, tc := range []struct {
+		mode   string
+		output string
+	}{
+		{v1alpha1.AgentModeReadOnly, review.OutputBranchCommit},
+		{v1alpha1.AgentModeSuggest, review.OutputRevertPR},
+	} {
+		t.Run("write output forbidden in "+tc.mode, func(t *testing.T) {
+			exec := &stubExecutor{}
+			mux := newMux(exec, tc.mode)
+			body := strings.NewReader(fmt.Sprintf(`{"workspace":"/home/runner/_work/repo","instructions":"mutate","output":%q}`, tc.output))
+			req := httptest.NewRequest(http.MethodPost, "/run", body)
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 
-			if rec.Code != http.StatusNotImplemented {
-				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotImplemented, rec.Body.String())
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 			}
 			if exec.called {
-				t.Fatal("executor should not be called for unimplemented mode")
+				t.Fatal("executor should not be called when write output is forbidden")
 			}
 		})
 	}
+
+	t.Run("unknown mode returns 501", func(t *testing.T) {
+		exec := &stubExecutor{}
+		mux := newMux(exec, "unknown-mode")
+
+		body := strings.NewReader(`{"workspace":"/home/runner/_work/repo","instructions":"check tests"}`)
+		req := httptest.NewRequest(http.MethodPost, "/review", body)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotImplemented {
+			t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotImplemented, rec.Body.String())
+		}
+		if exec.called {
+			t.Fatal("executor should not be called for unimplemented mode")
+		}
+	})
 }
 
 func TestOutputValidationOnRun(t *testing.T) {
@@ -130,8 +174,6 @@ func TestOutputValidationOnRun(t *testing.T) {
 		wantStatus int
 	}{
 		{review.OutputDeploymentStatus, http.StatusNotImplemented},
-		{review.OutputBranchCommit, http.StatusNotImplemented},
-		{review.OutputRevertPR, http.StatusNotImplemented},
 		{"bogus-output", http.StatusBadRequest},
 	}
 
