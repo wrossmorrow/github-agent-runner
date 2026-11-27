@@ -32,6 +32,7 @@ An `AgenticRunnerDeployment` compiles into an ARC v2 `AutoscalingRunnerSet` whos
 - **Dedicated GitHub App RBAC**: The `github-auth` sidecar mints short-lived, repo-scoped tokens to a `tmpfs` mounted read-only into `agent` (never into `runner`), bounded by a dedicated review-bot App (`Contents: Read`, `Pull requests: Write`).
 - **Per-pod Egress Control**: `egress-proxy` (Squid) + a generated `NetworkPolicy` restrict outbound traffic to GitHub, the configured model gateway, and `AgenticRunnerToolchain.spec.egressAllowlist`.
 - **Gateway Separation of Concerns**: `pi` configuration (`models.json`, limits, CI attribution headers, and layered `AGENTS.md`) is rendered per deployment/run and assumes an external Model Gateway / Agent Router owns upstream LLM credentials and usage accounting.
+- **Fail-Open Transcript Archival (`spec.agent.sessionSink`)**: Optional HTTP archival endpoint (`endpoint` + `authSecretRef`) wired into Squid `allowed_domains`, `NetworkPolicy`, and `NO_PROXY`; `agentrunnerd` posts `metadata.json` + gzipped `transcript.jsonl.gz` on completion, error, or timeout without failing the run or adding cloud IAM to runner pods.
 
 ---
 

@@ -195,3 +195,32 @@ func (b *safeBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+func TestResolveSessionID(t *testing.T) {
+	generated, err := resolveSessionID("")
+	if err != nil {
+		t.Fatalf("resolveSessionID(\"\") error: %v", err)
+	}
+	if !safeSessionIDRegex.MatchString(generated) {
+		t.Fatalf("generated session ID %q failed safe pattern", generated)
+	}
+
+	if got, err := resolveSessionID(" sess_123-abc "); err != nil || got != "sess_123-abc" {
+		t.Fatalf("resolveSessionID valid = (%q, %v), want (\"sess_123-abc\", nil)", got, err)
+	}
+
+	for _, bad := range []string{"../../etc/passwd", "a/b", "has space", "..", "a.b", strings.Repeat("a", 129)} {
+		if _, err := resolveSessionID(bad); err == nil {
+			t.Errorf("resolveSessionID(%q) succeeded, expected error", bad)
+		}
+	}
+
+	runner := &Runner{Config: Config{PiBin: filepath.Join(t.TempDir(), "nonexistent-pi")}}
+	if _, err := runner.Run(context.Background(), Request{
+		Workspace:    t.TempDir(),
+		Instructions: "Check tests",
+		SessionID:    "../../escape",
+	}, nil); err == nil || !strings.Contains(err.Error(), "invalid sessionId") {
+		t.Fatalf("expected invalid sessionId error before starting pi, got %v", err)
+	}
+}

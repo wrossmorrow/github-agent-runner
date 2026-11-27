@@ -762,3 +762,28 @@ func TestRunnerWriteOutputRejectsDirtyWorkspace(t *testing.T) {
 		t.Fatalf("expected git status failure before starting pi on non-git workspace, got %v", nonGitErr)
 	}
 }
+
+func TestBuildChildEnvStripsSidecarSecrets(t *testing.T) {
+	t.Setenv("SESSION_SINK_TOKEN", "sink-top-secret")
+	t.Setenv("AGENT_GATEWAY_TOKEN", "gateway-top-secret")
+
+	env := buildChildEnv(Config{Model: "gpt-test", Provider: "gateway"}, Request{Repo: "org/repo", RunID: "123"}, "/tmp/pi-dir")
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "SESSION_SINK_TOKEN=") || strings.HasPrefix(entry, "AGENT_GATEWAY_TOKEN=") {
+			t.Fatalf("child env leaked sidecar secret %q", entry)
+		}
+	}
+	foundDir := false
+	foundRepo := false
+	for _, entry := range env {
+		if entry == "PI_CODING_AGENT_DIR=/tmp/pi-dir" {
+			foundDir = true
+		}
+		if entry == "AGENT_GITHUB_REPO=org/repo" {
+			foundRepo = true
+		}
+	}
+	if !foundDir || !foundRepo {
+		t.Fatalf("expected PI_CODING_AGENT_DIR and AGENT_GITHUB_REPO in child env, got %v", env)
+	}
+}

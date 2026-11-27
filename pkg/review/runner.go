@@ -102,9 +102,9 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	userPrompt := BuildUserPrompt(req, diffStat, hasRepoAgentsMD)
 
-	sessionID := strings.TrimSpace(req.SessionID)
-	if sessionID == "" {
-		sessionID = generateUUIDv4()
+	sessionID, err := resolveSessionID(req.SessionID)
+	if err != nil {
+		return nil, err
 	}
 	req.SessionID = sessionID
 	sessionKind := deriveSessionKind(r.Config.Mode, req.Output)
@@ -587,7 +587,13 @@ func readDiffStat(ctx context.Context, workspace, baseRef, headSHA string) strin
 }
 
 func buildChildEnv(cfg Config, req Request, piDir string) []string {
-	env := os.Environ()
+	var env []string
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "SESSION_SINK_TOKEN=") || strings.HasPrefix(entry, "AGENT_GATEWAY_TOKEN=") {
+			continue
+		}
+		env = append(env, entry)
+	}
 	add := func(k, v string) {
 		if v != "" {
 			env = append(env, k+"="+v)

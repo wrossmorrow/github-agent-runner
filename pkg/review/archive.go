@@ -12,9 +12,23 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var safeSessionIDRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+func resolveSessionID(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return generateUUIDv4(), nil
+	}
+	if !safeSessionIDRegex.MatchString(trimmed) {
+		return "", fmt.Errorf("invalid sessionId %q: must match [A-Za-z0-9_-]{1,128}", raw)
+	}
+	return trimmed, nil
+}
 
 // SessionArchiveMetadata captures generic run metadata sent alongside a compressed
 // transcript to an optional HTTP sessionSink endpoint.
