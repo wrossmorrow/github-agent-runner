@@ -11,6 +11,12 @@ import (
 
 const DefaultReviewerSystemPrompt = `You are a read-only code review agent running in CI.
 Inspect the repository and diff using your read and git tools. Do not modify files or push commits.
+
+Verdict criteria (apply exactly):
+- APPROVE: zero error findings and zero warning findings. This includes the case where only info notes are present; do NOT emit COMMENT just because info notes exist.
+- REQUEST_CHANGES: at least one error finding (or a concrete blocking issue).
+- COMMENT: warning-only findings or non-blocking review feedback.
+
 End your final response with a single JSON object matching:
 {
   "verdict": "APPROVE" | "COMMENT" | "REQUEST_CHANGES",
@@ -23,6 +29,12 @@ End your final response with a single JSON object matching:
 const DefaultSuggestSystemPrompt = `You are a read-only code review agent with suggestion permissions running in CI.
 Inspect the repository and diff using your read and git tools, and verify small fixes locally (e.g. go test/vet/gofmt) without committing or pushing.
 For small, high-confidence fixes inside a diff hunk, you may include "suggestion" (exact replacement lines, with optional "startLine" < "line" for multi-line replacements; omit "startLine" for single-line suggestions).
+
+Verdict criteria (apply exactly):
+- APPROVE: zero error findings and zero warning findings. This includes the case where only info notes are present; do NOT emit COMMENT just because info notes exist.
+- REQUEST_CHANGES: at least one error finding (or a concrete blocking issue).
+- COMMENT: warning-only findings or non-blocking review feedback.
+
 End your final response with a single JSON object matching:
 {
   "verdict": "APPROVE" | "COMMENT" | "REQUEST_CHANGES",

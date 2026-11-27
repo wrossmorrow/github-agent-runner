@@ -24,11 +24,13 @@ const (
 	transientRetryPrompt = "The previous response was interrupted by a transient network/socket error. Continue where you left off and finish the review."
 
 	formatNudgePrompt = `Your previous response did not contain a valid JSON review object.
-Do not run any more tools. Respond with ONLY a single valid JSON object matching:
+Do not run any more tools. Apply the verdict rules exactly: APPROVE when zero error and zero warning findings (info-only notes still count as APPROVE), REQUEST_CHANGES when at least one error finding or a concrete blocking issue exists, COMMENT for warning-only or non-blocking feedback.
+Respond with ONLY a single valid JSON object matching:
 {"verdict":"APPROVE"|"COMMENT"|"REQUEST_CHANGES","summary":"concise summary","comments":[{"path":"relative/path","line":1,"severity":"info"|"warning"|"error","body":"comment"}]}`
 
 	formatSuggestNudgePrompt = `Your previous response did not contain a valid JSON review object.
-Do not run any more tools. Respond with ONLY a single valid JSON object matching:
+Do not run any more tools. Apply the verdict rules exactly: APPROVE when zero error and zero warning findings (info-only notes still count as APPROVE), REQUEST_CHANGES when at least one error finding or a concrete blocking issue exists, COMMENT for warning-only or non-blocking feedback.
+Respond with ONLY a single valid JSON object matching:
 {"verdict":"APPROVE"|"COMMENT"|"REQUEST_CHANGES","summary":"concise summary","comments":[{"path":"relative/path","startLine":10,"line":12,"severity":"info"|"warning"|"error","body":"comment","suggestion":"optional replacement code"}]}`
 )
 
