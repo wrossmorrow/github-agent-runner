@@ -42,11 +42,21 @@ render-example:
 render-summary:
     go run ./cmd/agentrunner-render --example | jq -r '.[] | "\(.kind)/\(.metadata.name)"'
 
-# build a toolchain sidecar image stage (agent, python, golang, rust, java17, java21)
-containerize toolchain="agent" tag="latest":
+# build a toolchain sidecar image stage (agent, python, golang, rust, java); minor tags auto-apply matrix build args
+containerize toolchain="agent" tag="latest" *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    build_args=()
+    while IFS= read -r arg; do
+        [ -n "${arg}" ] && build_args+=(--build-arg "${arg}")
+    done < <(jq -r --arg name "{{ toolchain }}" --arg minor "{{ tag }}" \
+        '.[] | select(.name == $name and .minor == $minor) | .build_args[]?' \
+        images/toolchains/matrix.json)
     docker build -f images/toolchains/Dockerfile \
-        --target {{ toolchain }} \
-        -t {{ image_repository }}/{{ image_name_prefix }}-{{ toolchain }}:{{ tag }} .
+        --target "{{ toolchain }}" \
+        "${build_args[@]+"${build_args[@]}"}" \
+        {{ args }} \
+        -t "{{ image_repository }}/{{ image_name_prefix }}-{{ toolchain }}:{{ tag }}" .
 
 # build the github-auth token-minter sidecar image
 containerize-github-auth tag="latest":

@@ -162,7 +162,7 @@ jobs:
 | Helm chart (CRDs + controller) | `oci://ghcr.io/wrossmorrow/charts/agentrunner-controller` |
 | Controller image | `ghcr.io/wrossmorrow/agentrunner-controller` |
 | GitHub App token sidecar | `ghcr.io/wrossmorrow/agentrunner-github-auth` |
-| Toolchain sidecar images | `ghcr.io/wrossmorrow/agentrunner-{agent,python,golang,rust,java17,java21}` |
+| Toolchain sidecar images | `ghcr.io/wrossmorrow/agentrunner-{agent,python,golang,rust,java}` (versioned tags e.g. `:1.26`, `:1.26-0.0.9`, `:3.13`, `:21`) |
 
 ---
 
@@ -175,7 +175,7 @@ jobs:
 ```bash
 just check                    # gofmt check, go vet, go build, go test -race -shuffle=on
 just render-summary           # render built-in example manifests and list Kind/Name
-just containerize golang      # build a toolchain image (agent|python|golang|rust|java17|java21)
+just containerize golang 1.25 # build a toolchain image (agent|python|golang|rust|java; minor tags auto-apply matrix build args)
 just containerize-github-auth # build the github-auth sidecar image
 just containerize-controller  # build the controller image
 just sync-chart-crds          # copy config/crd/*.yaml into charts/agentrunner-controller/crds/

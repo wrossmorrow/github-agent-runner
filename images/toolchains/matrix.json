@@ -1,0 +1,58 @@
+[
+  {
+    "name": "golang",
+    "target": "golang",
+    "minor": "1.25",
+    "is_default": false,
+    "build_args": ["GO_VERSION=1.25.14"],
+    "smoke_cmd": "go version | grep -F 'go1.25.14'"
+  },
+  {
+    "name": "golang",
+    "target": "golang",
+    "minor": "1.26",
+    "is_default": true,
+    "build_args": ["GO_VERSION=1.26.10"],
+    "smoke_cmd": "go version | grep -F 'go1.26.10'"
+  },
+  {
+    "name": "python",
+    "target": "python",
+    "minor": "3.12",
+    "is_default": false,
+    "build_args": ["PYTHON_VERSION=3.12.16"],
+    "smoke_cmd": "python3 --version | grep -F 'Python 3.12.16' && uv --version"
+  },
+  {
+    "name": "python",
+    "target": "python",
+    "minor": "3.13",
+    "is_default": true,
+    "build_args": ["PYTHON_VERSION=3.13.18"],
+    "smoke_cmd": "python3 --version | grep -F 'Python 3.13.18' && uv --version"
+  },
+  {
+    "name": "rust",
+    "target": "rust",
+    "minor": "1.99",
+    "is_default": true,
+    "build_args": ["RUST_VERSION=1.99.1"],
+    "smoke_cmd": "rustc --version | grep -F 'rustc 1.99.1' && cargo --version"
+  },
+  {
+    "name": "java",
+    "target": "java",
+    "minor": "17",
+    "is_default": false,
+    "build_args": ["JAVA_VERSION=17"],
+    "smoke_cmd": "java -version 2>&1 | grep -F 'version \"17.' && gradle --version"
+  },
+  {
+    "name": "java",
+    "target": "java",
+    "minor": "21",
+    "is_default": true,
+    "build_args": ["JAVA_VERSION=21"],
+    "smoke_cmd": "java -version 2>&1 | grep -F 'version \"21.' && gradle --version"
+  }
+]
