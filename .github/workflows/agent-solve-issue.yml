@@ -1,0 +1,90 @@
+name: Agent Solve Issue
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: GitHub issue number to implement and open a PR for
+        required: true
+        type: string
+      branch:
+        description: Target branch name (defaults to bot/issue-<issue_number>)
+        required: false
+        type: string
+        default: ""
+      extra_instructions:
+        description: Optional extra guidance appended to the agent prompt
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: agent-solve-issue-${{ inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  solve:
+    name: Solve Issue #${{ inputs.issue_number }}
+    runs-on: github-agent-runner-author
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          TARGET_BRANCH: ${{ inputs.branch }}
+          EXTRA_INSTRUCTIONS: ${{ inputs.extra_instructions }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$ISSUE_NUMBER" | grep -Eq '^[0-9]+$'; then
+            echo "::error::issue_number must be numeric, got: $ISSUE_NUMBER"
+            exit 1
+          fi
+
+          issue_json="$(gh issue view "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --json title,body,url)"
+          issue_title="$(printf '%s' "$issue_json" | jq -r '.title')"
+          issue_body="$(printf '%s' "$issue_json" | jq -r '.body // ""')"
+          issue_url="$(printf '%s' "$issue_json" | jq -r '.url')"
+
+          branch="$TARGET_BRANCH"
+          if [ -z "$branch" ]; then
+            branch="bot/issue-${ISSUE_NUMBER}"
+          fi
+
+          delim="AGENTRUNNER_ISSUE_EOF_$$_${RANDOM}"
+          {
+            printf 'branch=%s\n' "$branch"
+            printf 'instructions<<%s\n' "$delim"
+            printf 'Implement the changes requested in GitHub Issue #%s (%s).\n\n' "$ISSUE_NUMBER" "$issue_url"
+            printf 'Title: %s\n\n' "$issue_title"
+            if [ -n "$issue_body" ]; then
+              printf 'Issue description:\n%s\n\n' "$issue_body"
+            fi
+            if [ -n "$EXTRA_INSTRUCTIONS" ]; then
+              printf 'Additional guidance:\n%s\n\n' "$EXTRA_INSTRUCTIONS"
+            fi
+            printf 'Requirements:\n'
+            printf -- '- Make minimal, clean, well-tested changes scoped to this issue.\n'
+            printf -- '- Add or update unit tests covering the new behavior.\n'
+            printf -- '- Run `just check` (and any other relevant local verification) before finishing.\n'
+            printf -- '- Do not commit, push, or open a PR manually; `agentrunnerd` handles git push and PR creation.\n'
+            printf -- '- Include `Closes #%s` in your summary.\n' "$ISSUE_NUMBER"
+            printf '%s\n' "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: ./action
+        with:
+          instructions: ${{ steps.issue.outputs.instructions }}
+          fail-on: none
+          output: branch-commit
+          branch: ${{ steps.issue.outputs.branch }}
+          open-pr: "true"

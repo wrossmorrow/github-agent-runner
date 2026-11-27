@@ -69,6 +69,12 @@ runs:
           open_pr_bool=true
         fi
 
+        # Grant group-write on the checkout so the agent sidecar (UID 1000) can edit
+        # files and write .git state alongside the runner (UID 1001) via SharedFSGroup.
+        if [ "$AGENT_OUTPUT" = "branch-commit" ] || [ "$AGENT_OUTPUT" = "revert-pr" ]; then
+          chmod -R g+w "$GITHUB_WORKSPACE"
+        fi
+
         jq -n \
           --arg workspace "$GITHUB_WORKSPACE" \
           --arg eventPath "$GITHUB_EVENT_PATH" \
