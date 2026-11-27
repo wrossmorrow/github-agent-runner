@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   solve:
-    name: Solve Issue #${{ inputs.issue_number }}
+    name: "Solve Issue #${{ inputs.issue_number }}"
     runs-on: github-agent-runner-author
     timeout-minutes: 20
     steps:
@@ -50,10 +50,14 @@ jobs:
             exit 1
           fi
 
-          issue_json="$(gh issue view "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --json title,body,url)"
+          issue_json="$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}")"
           issue_title="$(printf '%s' "$issue_json" | jq -r '.title')"
           issue_body="$(printf '%s' "$issue_json" | jq -r '.body // ""')"
-          issue_url="$(printf '%s' "$issue_json" | jq -r '.url')"
+          issue_url="$(printf '%s' "$issue_json" | jq -r '.html_url')"
 
           branch="$TARGET_BRANCH"
           if [ -z "$branch" ]; then
@@ -72,12 +76,14 @@ jobs:
             if [ -n "$EXTRA_INSTRUCTIONS" ]; then
               printf 'Additional guidance:\n%s\n\n' "$EXTRA_INSTRUCTIONS"
             fi
-            printf 'Requirements:\n'
-            printf -- '- Make minimal, clean, well-tested changes scoped to this issue.\n'
-            printf -- '- Add or update unit tests covering the new behavior.\n'
-            printf -- '- Run `just check` (and any other relevant local verification) before finishing.\n'
-            printf -- '- Do not commit, push, or open a PR manually; `agentrunnerd` handles git push and PR creation.\n'
-            printf -- '- Include `Closes #%s` in your summary.\n' "$ISSUE_NUMBER"
+            cat <<'REQ_EOF'
+            Requirements:
+            - Make minimal, clean, well-tested changes scoped to this issue.
+            - Add or update unit tests covering the new behavior.
+            - Run `just check` (and any other relevant local verification) before finishing.
+            - Do not commit, push, or open a PR manually; `agentrunnerd` handles git push and PR creation.
+            REQ_EOF
+            printf -- '- Include Closes #%s in your summary.\n' "$ISSUE_NUMBER"
             printf '%s\n' "$delim"
           } >> "$GITHUB_OUTPUT"
 
