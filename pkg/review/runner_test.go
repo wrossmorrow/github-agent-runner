@@ -734,4 +734,14 @@ func TestRunnerWriteOutputRejectsDirtyWorkspace(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "pre-existing uncommitted changes") {
 		t.Fatalf("expected dirty workspace error before starting pi, got %v", err)
 	}
+
+	_, nonGitErr := runner.Run(context.Background(), Request{
+		Workspace:    t.TempDir(),
+		Instructions: "Fix tests",
+		Output:       OutputBranchCommit,
+		TargetBranch: "bot/fix-nongit",
+	}, nil)
+	if nonGitErr == nil || !strings.Contains(nonGitErr.Error(), "checking workspace git status") {
+		t.Fatalf("expected git status failure before starting pi on non-git workspace, got %v", nonGitErr)
+	}
 }

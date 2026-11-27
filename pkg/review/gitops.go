@@ -60,19 +60,29 @@ func validateChangedPaths(paths []string) error {
 }
 
 func listChangedPaths(ctx context.Context, workspace string) ([]string, error) {
+	allPaths, _, err := inspectWorkspaceChanges(ctx, workspace)
+	return allPaths, err
+}
+
+func inspectWorkspaceChanges(ctx context.Context, workspace string) (allPaths, stagePaths []string, err error) {
 	out, err := runGit(ctx, workspace, "", "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return parsePorcelainZ(string(out)), nil
+	allPaths, stagePaths = parsePorcelainZStatus(string(out))
+	return allPaths, stagePaths, nil
 }
 
 func parsePorcelainZ(raw string) []string {
+	allPaths, _ := parsePorcelainZStatus(raw)
+	return allPaths
+}
+
+func parsePorcelainZStatus(raw string) (allPaths, stagePaths []string) {
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
 	tokens := strings.Split(raw, "\x00")
-	var paths []string
 	for i := 0; i < len(tokens); i++ {
 		tok := tokens[i]
 		if len(tok) < 4 {
@@ -81,17 +91,23 @@ func parsePorcelainZ(raw string) []string {
 		x, y := tok[0], tok[1]
 		p := tok[3:]
 		if p != "" {
-			paths = append(paths, p)
+			allPaths = append(allPaths, p)
+			// Only paths with unstaged worktree changes (y != ' ') need `git add --`;
+			// already-staged entries (e.g. `git mv`/`git rm` where y == ' ') stay in the index.
+			if y != ' ' {
+				stagePaths = append(stagePaths, p)
+			}
 		}
-		// Renames and copies emit the source path in the next NUL-delimited token.
+		// Renames and copies emit the source path in the next NUL-delimited token;
+		// validate it against blocked paths without passing the removed source to `git add`.
 		if (x == 'R' || x == 'C' || y == 'R' || y == 'C') && i+1 < len(tokens) {
 			i++
 			if tokens[i] != "" {
-				paths = append(paths, tokens[i])
+				allPaths = append(allPaths, tokens[i])
 			}
 		}
 	}
-	return paths
+	return allPaths, stagePaths
 }
 
 func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, req Request, res *Result) error {
@@ -134,7 +150,7 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 		return err
 	}
 
-	changed, err := listChangedPaths(ctx, req.Workspace)
+	changed, toStage, err := inspectWorkspaceChanges(ctx, req.Workspace)
 	if err != nil {
 		return err
 	}
@@ -152,17 +168,19 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 		}
 	}
 
-	seen := make(map[string]struct{}, len(changed))
-	uniqueChanged := make([]string, 0, len(changed))
-	for _, p := range changed {
+	seen := make(map[string]struct{}, len(toStage))
+	uniqueStage := make([]string, 0, len(toStage))
+	for _, p := range toStage {
 		if _, ok := seen[p]; !ok {
 			seen[p] = struct{}{}
-			uniqueChanged = append(uniqueChanged, p)
+			uniqueStage = append(uniqueStage, p)
 		}
 	}
-	addArgs := append([]string{"add", "--"}, uniqueChanged...)
-	if _, err := runGit(ctx, req.Workspace, "", addArgs...); err != nil {
-		return fmt.Errorf("staging workspace changes: %w", err)
+	if len(uniqueStage) > 0 {
+		addArgs := append([]string{"add", "--"}, uniqueStage...)
+		if _, err := runGit(ctx, req.Workspace, "", addArgs...); err != nil {
+			return fmt.Errorf("staging workspace changes: %w", err)
+		}
 	}
 
 	title := strings.TrimSpace(res.Title)

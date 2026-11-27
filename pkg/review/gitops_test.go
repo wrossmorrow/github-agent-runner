@@ -190,6 +190,53 @@ func TestGhPosterBranchCommitEndToEnd(t *testing.T) {
 	}
 }
 
+func TestGhPosterBranchCommitStagedGitMvAndRm(t *testing.T) {
+	bareDir, workDir := initTestRepoWithBareRemote(t)
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := exec.Command("git", "-C", workDir, "mv", "app.go", "renamed.go").CombinedOutput(); err != nil {
+		t.Fatalf("git mv failed: %v\n%s", err, string(out))
+	}
+	if out, err := exec.Command("git", "-C", workDir, "rm", "remove.go").CombinedOutput(); err != nil {
+		t.Fatalf("git rm failed: %v\n%s", err, string(out))
+	}
+	// Also append an unstaged edit to renamed.go (RM state in porcelain) to cover mixed staged+unstaged rename.
+	if err := os.WriteFile(filepath.Join(workDir, "renamed.go"), []byte("package app\n\nfunc Renamed() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	poster := &GhPoster{TokenFile: tokenFile}
+	err := poster.PostReview(context.Background(), Request{
+		Workspace:    workDir,
+		Repo:         "org/repo",
+		Output:       OutputBranchCommit,
+		TargetBranch: "bot/rename-42",
+	}, &Result{
+		Verdict: "APPROVE",
+		Title:   "refactor: rename app.go and drop remove.go",
+		Summary: "Renamed app.go via git mv and deleted remove.go via git rm.",
+	})
+	if err != nil {
+		t.Fatalf("PostReview after git mv/rm failed: %v", err)
+	}
+
+	treeOut, err := exec.Command("git", "-C", bareDir, "ls-tree", "--name-only", "refs/heads/bot/rename-42").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git ls-tree failed: %v (%s)", err, string(treeOut))
+	}
+	tree := string(treeOut)
+	if !strings.Contains(tree, "renamed.go") || strings.Contains(tree, "app.go") || strings.Contains(tree, "remove.go") {
+		t.Fatalf("unexpected tree on bot/rename-42 (want only renamed.go):\n%s", tree)
+	}
+	contentOut, err := exec.Command("git", "-C", bareDir, "show", "refs/heads/bot/rename-42:renamed.go").CombinedOutput()
+	if err != nil || !strings.Contains(string(contentOut), "func Renamed()") {
+		t.Fatalf("expected unstaged edit on renamed.go to be included in commit, got %q (%v)", string(contentOut), err)
+	}
+}
+
 func TestGhPosterBranchCommitRejectsWorkflowEdit(t *testing.T) {
 	_, workDir := initTestRepoWithBareRemote(t)
 	tokenFile := filepath.Join(t.TempDir(), "token")
