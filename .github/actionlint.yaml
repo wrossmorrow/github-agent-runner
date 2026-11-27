@@ -2,3 +2,4 @@ self-hosted-runner:
   labels:
     - github-agent-runner-review
     - github-agent-runner-release
+    - github-agent-runner-author
