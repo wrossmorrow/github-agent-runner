@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,23 +34,26 @@ Do not run any more tools. Respond with ONLY a single valid JSON object matching
 
 // Config holds runtime settings loaded by agentrunnerd from /etc/agentrunner/config.json.
 type Config struct {
-	PiBin             string              `json:"piBin,omitempty"`
-	PiArgs            []string            `json:"piArgs,omitempty"`
-	Harness           string              `json:"harness"`
-	Mode              string              `json:"mode,omitempty"`
-	Provider          string              `json:"provider,omitempty"`
-	Model             string              `json:"model"`
-	GatewayEndpoint   string              `json:"gatewayEndpoint"`
-	Limits            v1alpha1.LimitsSpec `json:"limits,omitempty"`
-	AgentsDirs        []string            `json:"agentsDirs,omitempty"`
-	ProtectedBranches *[]string           `json:"protectedBranches,omitempty"`
+	PiBin               string              `json:"piBin,omitempty"`
+	PiArgs              []string            `json:"piArgs,omitempty"`
+	Harness             string              `json:"harness"`
+	Mode                string              `json:"mode,omitempty"`
+	Provider            string              `json:"provider,omitempty"`
+	Model               string              `json:"model"`
+	GatewayEndpoint     string              `json:"gatewayEndpoint"`
+	SessionSinkEndpoint string              `json:"sessionSinkEndpoint,omitempty"`
+	Limits              v1alpha1.LimitsSpec `json:"limits,omitempty"`
+	AgentsDirs          []string            `json:"agentsDirs,omitempty"`
+	ProtectedBranches   *[]string           `json:"protectedBranches,omitempty"`
+	Attribution         map[string]string   `json:"attributionHeaders,omitempty"`
 }
 
 // Runner executes a single headless review against `pi --mode rpc`.
 type Runner struct {
-	Config       Config
-	Poster       Poster
-	RetryBackoff time.Duration
+	Config            Config
+	Poster            Poster
+	RetryBackoff      time.Duration
+	SessionSinkClient *http.Client
 }
 
 // Run spawns `pi`, executes the review prompt, streams GitHub Actions log
@@ -98,15 +102,25 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	userPrompt := BuildUserPrompt(req, diffStat, hasRepoAgentsMD)
 
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		sessionID = generateUUIDv4()
+	}
+	req.SessionID = sessionID
+	sessionKind := deriveSessionKind(r.Config.Mode, req.Output)
+	sessionName := deriveSessionName(req, sessionID)
+	startedAt := time.Now().UTC()
+
 	gatewayToken := strings.TrimSpace(os.Getenv("AGENT_GATEWAY_TOKEN"))
-	piDir, err := writePiConfigDir(r.Config, req, agentsMD, gatewayToken)
+	piDir, err := writePiConfigDir(r.Config, req, agentsMD, gatewayToken, sessionID, sessionKind, sessionName)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(piDir) }()
+	sessionFile := filepath.Join(piDir, sessionID+".jsonl")
 
-	_, _ = fmt.Fprintf(logOut, "agentrunner: provider=%s model=%s gateway=%s hasGatewayToken=%v (len=%d)\n",
-		providerName(r.Config), r.Config.Model, r.Config.GatewayEndpoint, gatewayToken != "", len(gatewayToken))
+	_, _ = fmt.Fprintf(logOut, "agentrunner: session=%s provider=%s model=%s gateway=%s hasGatewayToken=%v (len=%d)\n",
+		sessionID, providerName(r.Config), r.Config.Model, r.Config.GatewayEndpoint, gatewayToken != "", len(gatewayToken))
 
 	bin := r.Config.PiBin
 	if bin == "" {
@@ -114,7 +128,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	}
 	args := r.Config.PiArgs
 	if len(args) == 0 {
-		args = []string{"--mode", "rpc"}
+		args = []string{"--mode", "rpc", "--session", sessionFile}
 		if r.Config.GatewayEndpoint != "" && r.Config.Model != "" {
 			args = append(args, "--provider", providerName(r.Config), "--model", r.Config.Model)
 		}
@@ -126,9 +140,59 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	if err := client.Start(); err != nil {
 		return nil, fmt.Errorf("starting pi rpc: %w", err)
 	}
+
+	var outcome *Outcome
+	turns := 0
 	defer func() {
+		var stats map[string]any
+		sinkEndpoint := strings.TrimSpace(r.Config.SessionSinkEndpoint)
+		if sinkEndpoint != "" {
+			statsCtx, statsCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			stats, _ = client.Stats(statsCtx)
+			statsCancel()
+		}
 		_ = client.CloseStdin()
 		_ = client.Stop()
+
+		if sinkEndpoint != "" {
+			endReason := "error"
+			switch {
+			case outcome != nil:
+				endReason = "closed"
+			case ctx.Err() == context.DeadlineExceeded:
+				endReason = "timeout"
+			}
+			meta := SessionArchiveMetadata{
+				SessionID:   sessionID,
+				SessionKind: sessionKind,
+				SessionName: sessionName,
+				Repo:        req.Repo,
+				PRNumber:    req.PRNumber,
+				IssueNumber: req.IssueNumber,
+				RunID:       req.RunID,
+				HeadSHA:     req.HeadSHA,
+				BaseRef:     req.BaseRef,
+				Tag:         req.Tag,
+				Provider:    providerName(r.Config),
+				Model:       r.Config.Model,
+				Mode:        r.Config.Mode,
+				Output:      req.Output,
+				Turns:       turns,
+				EndReason:   endReason,
+				StartedAt:   startedAt,
+				EndedAt:     time.Now().UTC(),
+				Stats:       stats,
+			}
+			if outcome != nil && outcome.Result != nil {
+				meta.Verdict = outcome.Result.Verdict
+				meta.Findings = len(outcome.Result.Comments)
+			}
+			uploadCtx, uploadCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			if uerr := uploadSessionArchive(uploadCtx, r.SessionSinkClient, sinkEndpoint, os.Getenv("SESSION_SINK_TOKEN"), meta, sessionFile); uerr != nil {
+				_, _ = fmt.Fprintf(logOut, "agentrunner: warning: session archive upload failed: %v\n", uerr)
+			}
+			uploadCancel()
+		}
 	}()
 
 	events, unsub := client.Subscribe()
@@ -146,7 +210,6 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		backoff = defaultRetryBackoff
 	}
 
-	turns := 0
 	finalText, err := sendPromptWithTransportRetries(
 		ctx, client, events, userPrompt, transientRetryPrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
 	)
@@ -197,11 +260,13 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		exitCode = 1
 	}
 
-	return &Outcome{
-		Result:   reviewRes,
-		ExitCode: exitCode,
-		Turns:    turns,
-	}, nil
+	outcome = &Outcome{
+		SessionID: sessionID,
+		Result:    reviewRes,
+		ExitCode:  exitCode,
+		Turns:     turns,
+	}
+	return outcome, nil
 }
 
 func selectDefaultSystemPrompt(mode, output string) string {

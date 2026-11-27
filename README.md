@@ -152,6 +152,7 @@ jobs:
 | `findings` | Number of findings emitted by the agent |
 | `turns` | Number of agent turns executed |
 | `exit-code` | Exit code determined from `fail-on` threshold |
+| `session-id` | Unique session UUID generated for this agent run |
 
 ---
 

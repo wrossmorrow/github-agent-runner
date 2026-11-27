@@ -127,9 +127,10 @@ exit 0
 
 	poster := &GhPoster{TokenFile: tokenFile, GHBin: ghScript}
 	err := poster.PostReview(context.Background(), Request{
-		Repo:     "org/repo",
-		PRNumber: 7,
-		Output:   "pr-review",
+		Repo:      "org/repo",
+		PRNumber:  7,
+		Output:    "pr-review",
+		SessionID: "sess-abc-123",
 	}, &Result{
 		Verdict: "REQUEST_CHANGES",
 		Summary: "Needs changes",
@@ -159,8 +160,8 @@ exit 0
 		t.Fatalf("expected fallback retry to send empty comments[], got %#v", retry["comments"])
 	}
 	body, _ := retry["body"].(string)
-	if !strings.Contains(body, "Outside hunk") {
-		t.Fatalf("expected fallback body to preserve all findings, got:\n%s", body)
+	if !strings.Contains(body, "Outside hunk") || !strings.Contains(body, "<!-- agentrunner-session: sess-abc-123 -->") {
+		t.Fatalf("expected fallback body to preserve findings and session footer, got:\n%s", body)
 	}
 }
 
@@ -419,5 +420,12 @@ func TestToGitHubCommentsSuggestions(t *testing.T) {
 	reviewBody := formatPRReviewBody(&Result{Verdict: "COMMENT", Summary: "S"}, inline, offDiff)
 	if !strings.Contains(reviewBody, "crossHunk()") {
 		t.Fatalf("expected off-diff suggestion code preserved in review body:\n%s", reviewBody)
+	}
+	withFooter := appendSessionFooter(reviewBody, "uuid-footer-test")
+	if !strings.Contains(withFooter, "<!-- agentrunner-session: uuid-footer-test -->") {
+		t.Fatalf("expected session footer in body, got:\n%s", withFooter)
+	}
+	if unchanged := appendSessionFooter(reviewBody, ""); unchanged != reviewBody {
+		t.Fatalf("empty session ID should leave body unchanged")
 	}
 }

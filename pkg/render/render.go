@@ -118,14 +118,15 @@ func (b *Bundle) List() K8sObject {
 // AgentRuntimeConfig is the JSON structure written to /etc/agentrunner/config.json
 // and read by agentrunnerd inside the agent sidecar.
 type AgentRuntimeConfig struct {
-	Harness           string              `json:"harness"`
-	Mode              string              `json:"mode,omitempty"`
-	Provider          string              `json:"provider,omitempty"`
-	Model             string              `json:"model"`
-	GatewayEndpoint   string              `json:"gatewayEndpoint"`
-	Limits            v1alpha1.LimitsSpec `json:"limits,omitempty"`
-	ProtectedBranches *[]string           `json:"protectedBranches,omitempty"`
-	Attribution       map[string]string   `json:"attributionHeaders,omitempty"`
+	Harness             string              `json:"harness"`
+	Mode                string              `json:"mode,omitempty"`
+	Provider            string              `json:"provider,omitempty"`
+	Model               string              `json:"model"`
+	GatewayEndpoint     string              `json:"gatewayEndpoint"`
+	SessionSinkEndpoint string              `json:"sessionSinkEndpoint,omitempty"`
+	Limits              v1alpha1.LimitsSpec `json:"limits,omitempty"`
+	ProtectedBranches   *[]string           `json:"protectedBranches,omitempty"`
+	Attribution         map[string]string   `json:"attributionHeaders,omitempty"`
 }
 
 func effectiveMode(dep *v1alpha1.AgenticRunnerDeployment) string {
@@ -163,10 +164,10 @@ func Render(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToo
 	if err != nil {
 		return nil, err
 	}
-	egressCM, gatewayPort := buildEgressConfigMap(dep, tc, ns, egressCMName, opts)
+	egressCM, endpointPorts := buildEgressConfigMap(dep, tc, ns, egressCMName, opts)
 	arcRole, arcRoleBinding := buildARCRBAC(dep, ns, opts)
 	runnerSet := buildAutoscalingRunnerSet(dep, tc, ns, agentCMName, egressCMName, opts)
-	netPol := buildNetworkPolicy(dep, ns, gatewayPort)
+	netPol := buildNetworkPolicy(dep, ns, endpointPorts)
 
 	return &Bundle{
 		AgentConfigMap:           agentCM,
@@ -183,19 +184,26 @@ func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Age
 	if harness == "" {
 		harness = "pi"
 	}
+	var sessionSinkEndpoint string
+	if dep.Spec.Agent.SessionSink != nil {
+		sessionSinkEndpoint = dep.Spec.Agent.SessionSink.Endpoint
+	}
 	cfg := AgentRuntimeConfig{
-		Harness:           harness,
-		Mode:              effectiveMode(dep),
-		Provider:          dep.Spec.Agent.Provider,
-		Model:             dep.Spec.Agent.Model,
-		GatewayEndpoint:   dep.Spec.Agent.Gateway.Endpoint,
-		Limits:            dep.Spec.Agent.Limits,
-		ProtectedBranches: dep.Spec.Agent.ProtectedBranches,
+		Harness:             harness,
+		Mode:                effectiveMode(dep),
+		Provider:            dep.Spec.Agent.Provider,
+		Model:               dep.Spec.Agent.Model,
+		GatewayEndpoint:     dep.Spec.Agent.Gateway.Endpoint,
+		SessionSinkEndpoint: sessionSinkEndpoint,
+		Limits:              dep.Spec.Agent.Limits,
+		ProtectedBranches:   dep.Spec.Agent.ProtectedBranches,
 		Attribution: map[string]string{
-			"sessionId": "x-session-id",
-			"repo":      "x-github-repo",
-			"runId":     "x-github-run-id",
-			"pr":        "x-github-pr",
+			"sessionId":   "x-session-id",
+			"sessionKind": "x-session-kind",
+			"sessionName": "x-session-name",
+			"repo":        "x-github-repo",
+			"runId":       "x-github-run-id",
+			"pr":          "x-github-pr",
 		},
 	}
 	cfgBytes, err := json.MarshalIndent(cfg, "", "  ")
@@ -225,7 +233,7 @@ func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Age
 	}, nil
 }
 
-func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToolchain, ns, name string, opts Options) (K8sObject, int) {
+func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToolchain, ns, name string, opts Options) (K8sObject, []int) {
 	seen := map[string]struct{}{}
 	var domains []string
 	addHost := func(h string) {
@@ -250,19 +258,35 @@ func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Ag
 		addHost(h)
 	}
 
-	gatewayPort := 443
-	if u, err := url.Parse(dep.Spec.Agent.Gateway.Endpoint); err == nil {
+	var ports []int
+	seenPorts := map[int]struct{}{}
+	addEndpoint := func(rawURL string) {
+		u, err := url.Parse(strings.TrimSpace(rawURL))
+		if err != nil || u.Host == "" {
+			return
+		}
 		addHost(u.Hostname())
+		port := 443
 		if p := u.Port(); p != "" {
 			if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
-				gatewayPort = parsed
+				port = parsed
 			}
 		} else if u.Scheme == "http" {
-			gatewayPort = 80
+			port = 80
+		}
+		if _, ok := seenPorts[port]; !ok {
+			seenPorts[port] = struct{}{}
+			ports = append(ports, port)
 		}
 	}
 
+	addEndpoint(dep.Spec.Agent.Gateway.Endpoint)
+	if dep.Spec.Agent.SessionSink != nil {
+		addEndpoint(dep.Spec.Agent.SessionSink.Endpoint)
+	}
+
 	sort.Strings(domains)
+	sort.Ints(ports)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "http_port 127.0.0.1:%d\n", opts.ProxyPort)
@@ -288,7 +312,7 @@ func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Ag
 		"data": map[string]string{
 			"squid.conf": b.String(),
 		},
-	}, gatewayPort
+	}, ports
 }
 
 func buildAutoscalingRunnerSet(
@@ -312,9 +336,22 @@ func buildAutoscalingRunnerSet(
 	proxyAddr := fmt.Sprintf("http://127.0.0.1:%d", opts.ProxyPort)
 	noProxyHosts := []string{"localhost", "127.0.0.1", "::1"}
 	javaNonProxyHosts := []string{"localhost", "127.0.0.1"}
-	if gh := gatewayHost(dep.Spec.Agent.Gateway.Endpoint); gh != "" && gh != "localhost" && gh != "127.0.0.1" && gh != "::1" {
-		noProxyHosts = append(noProxyHosts, gh)
-		javaNonProxyHosts = append(javaNonProxyHosts, gh)
+	seenNoProxy := map[string]struct{}{"localhost": {}, "127.0.0.1": {}, "::1": {}}
+	addNoProxy := func(rawURL string) {
+		h := gatewayHost(rawURL)
+		if h == "" {
+			return
+		}
+		if _, ok := seenNoProxy[h]; ok {
+			return
+		}
+		seenNoProxy[h] = struct{}{}
+		noProxyHosts = append(noProxyHosts, h)
+		javaNonProxyHosts = append(javaNonProxyHosts, h)
+	}
+	addNoProxy(dep.Spec.Agent.Gateway.Endpoint)
+	if dep.Spec.Agent.SessionSink != nil {
+		addNoProxy(dep.Spec.Agent.SessionSink.Endpoint)
 	}
 	noProxy := strings.Join(noProxyHosts, ",")
 	agentEnv := []K8sObject{
@@ -344,6 +381,21 @@ func buildAutoscalingRunnerSet(
 			"valueFrom": K8sObject{
 				"secretKeyRef": K8sObject{
 					"name": dep.Spec.Agent.Gateway.AuthSecretRef.Name,
+					"key":  key,
+				},
+			},
+		})
+	}
+	if dep.Spec.Agent.SessionSink != nil && dep.Spec.Agent.SessionSink.AuthSecretRef != nil {
+		key := dep.Spec.Agent.SessionSink.AuthSecretRef.Key
+		if key == "" {
+			key = "token"
+		}
+		agentEnv = append(agentEnv, K8sObject{
+			"name": "SESSION_SINK_TOKEN",
+			"valueFrom": K8sObject{
+				"secretKeyRef": K8sObject{
+					"name": dep.Spec.Agent.SessionSink.AuthSecretRef.Name,
 					"key":  key,
 				},
 			},
@@ -566,12 +618,14 @@ func extractRepoName(configURL string) string {
 	return ""
 }
 
-func buildNetworkPolicy(dep *v1alpha1.AgenticRunnerDeployment, ns string, gatewayPort int) K8sObject {
+func buildNetworkPolicy(dep *v1alpha1.AgenticRunnerDeployment, ns string, endpointPorts []int) K8sObject {
 	ports := []K8sObject{
 		{"protocol": "TCP", "port": 443},
 	}
-	if gatewayPort != 443 && gatewayPort > 0 {
-		ports = append(ports, K8sObject{"protocol": "TCP", "port": gatewayPort})
+	for _, p := range endpointPorts {
+		if p != 443 && p > 0 {
+			ports = append(ports, K8sObject{"protocol": "TCP", "port": p})
+		}
 	}
 
 	return K8sObject{

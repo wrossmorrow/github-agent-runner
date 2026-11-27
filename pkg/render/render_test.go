@@ -388,3 +388,71 @@ func TestRenderProtectedBranches(t *testing.T) {
 		}
 	})
 }
+
+func TestRenderSessionSink(t *testing.T) {
+	dep, tc := sampleInputs()
+	dep.Spec.Agent.SessionSink = &v1alpha1.SessionSinkSpec{
+		Endpoint:      "http://session-hub.session-system.svc.cluster.local:8090/v1/sessions",
+		AuthSecretRef: &v1alpha1.SecretRef{Name: "session-sink-secret", Key: "bearer"},
+	}
+
+	bundle, err := Render(dep, tc, Options{})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	var rtCfg AgentRuntimeConfig
+	if err := json.Unmarshal([]byte(bundle.AgentConfigMap["data"].(map[string]string)["config.json"]), &rtCfg); err != nil {
+		t.Fatalf("unmarshal config.json: %v", err)
+	}
+	if rtCfg.SessionSinkEndpoint != "http://session-hub.session-system.svc.cluster.local:8090/v1/sessions" {
+		t.Fatalf("SessionSinkEndpoint = %q, want configured URL", rtCfg.SessionSinkEndpoint)
+	}
+	if rtCfg.Attribution["sessionKind"] != "x-session-kind" || rtCfg.Attribution["sessionName"] != "x-session-name" {
+		t.Fatalf("missing session attribution headers in config.json: %+v", rtCfg.Attribution)
+	}
+
+	squidConf := bundle.EgressConfigMap["data"].(map[string]string)["squid.conf"]
+	if !strings.Contains(squidConf, "acl allowed_domains dstdomain session-hub.session-system.svc.cluster.local\n") {
+		t.Fatalf("squid.conf missing sessionSink domain:\n%s", squidConf)
+	}
+
+	egressRules := bundle.NetworkPolicy["spec"].(K8sObject)["egress"].([]K8sObject)
+	ports := egressRules[1]["ports"].([]K8sObject)
+	has8090 := false
+	for _, p := range ports {
+		if p["port"] == 8090 {
+			has8090 = true
+		}
+	}
+	if !has8090 {
+		t.Fatalf("NetworkPolicy missing sessionSink port 8090: %#v", ports)
+	}
+
+	findAgentEnv := func(b *Bundle, name string) (K8sObject, bool) {
+		inits := b.AutoscalingRunnerSet["spec"].(K8sObject)["template"].(K8sObject)["spec"].(K8sObject)["initContainers"].([]K8sObject)
+		for _, ic := range inits {
+			if ic["name"] != "agent" {
+				continue
+			}
+			for _, e := range ic["env"].([]K8sObject) {
+				if e["name"] == name {
+					return e, true
+				}
+			}
+		}
+		return nil, false
+	}
+
+	if env, ok := findAgentEnv(bundle, "NO_PROXY"); !ok || !strings.Contains(env["value"].(string), "session-hub.session-system.svc.cluster.local") {
+		t.Fatalf("NO_PROXY missing sessionSink host: %#v", env)
+	}
+	tokenEnv, ok := findAgentEnv(bundle, "SESSION_SINK_TOKEN")
+	if !ok {
+		t.Fatal("missing SESSION_SINK_TOKEN env var")
+	}
+	secRef := tokenEnv["valueFrom"].(K8sObject)["secretKeyRef"].(K8sObject)
+	if secRef["name"] != "session-sink-secret" || secRef["key"] != "bearer" {
+		t.Fatalf("unexpected SESSION_SINK_TOKEN secretKeyRef: %#v", secRef)
+	}
+}

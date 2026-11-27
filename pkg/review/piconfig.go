@@ -44,9 +44,18 @@ func providerName(cfg Config) string {
 	return "gateway"
 }
 
+func attributionHeaderName(cfg Config, key, fallback string) string {
+	if cfg.Attribution != nil {
+		if custom := strings.TrimSpace(cfg.Attribution[key]); custom != "" {
+			return custom
+		}
+	}
+	return fallback
+}
+
 // writePiConfigDir creates a per-run $PI_CODING_AGENT_DIR containing the
 // assembled AGENTS.md and a models.json routing pi through gatewayEndpoint.
-func writePiConfigDir(cfg Config, req Request, agentsMD string, gatewayToken string) (string, error) {
+func writePiConfigDir(cfg Config, req Request, agentsMD, gatewayToken, sessionID, sessionKind, sessionName string) (string, error) {
 	dir, err := os.MkdirTemp("", "agentrunner-pi-*")
 	if err != nil {
 		return "", fmt.Errorf("creating pi config dir: %w", err)
@@ -70,14 +79,23 @@ func writePiConfigDir(cfg Config, req Request, agentsMD string, gatewayToken str
 			headers["Authorization"] = "Bearer " + gatewayToken
 		}
 
+		if sessionID != "" {
+			headers[attributionHeaderName(cfg, "sessionId", "x-session-id")] = sessionID
+		}
+		if sessionKind != "" {
+			headers[attributionHeaderName(cfg, "sessionKind", "x-session-kind")] = sessionKind
+		}
+		if sessionName != "" {
+			headers[attributionHeaderName(cfg, "sessionName", "x-session-name")] = sessionName
+		}
 		if req.Repo != "" {
-			headers["x-github-repo"] = req.Repo
+			headers[attributionHeaderName(cfg, "repo", "x-github-repo")] = req.Repo
 		}
 		if req.RunID != "" {
-			headers["x-github-run-id"] = req.RunID
+			headers[attributionHeaderName(cfg, "runId", "x-github-run-id")] = req.RunID
 		}
 		if req.PRNumber > 0 {
-			headers["x-github-pr"] = strconv.Itoa(req.PRNumber)
+			headers[attributionHeaderName(cfg, "pr", "x-github-pr")] = strconv.Itoa(req.PRNumber)
 		}
 
 		modelsDoc := piModelsFile{

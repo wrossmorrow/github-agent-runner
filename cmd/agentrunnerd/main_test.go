@@ -32,8 +32,9 @@ func (s *stubExecutor) Run(_ context.Context, _ review.Request, logOut io.Writer
 func TestHealthAndReviewStreaming(t *testing.T) {
 	mux := newMux(&stubExecutor{
 		outcome: &review.Outcome{
-			ExitCode: 1,
-			Turns:    3,
+			SessionID: "sess-uuid-1234",
+			ExitCode:  1,
+			Turns:     3,
 			Result: &review.Result{
 				Verdict: "REQUEST_CHANGES",
 				Summary: "Missing tests",
@@ -75,7 +76,7 @@ func TestHealthAndReviewStreaming(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(last, "AGENTRUNNER_RESULT=")), &trailer); err != nil {
 			t.Fatalf("unmarshal trailer: %v", err)
 		}
-		if trailer.ExitCode != 1 || trailer.Verdict != "REQUEST_CHANGES" || trailer.Findings != 1 {
+		if trailer.ExitCode != 1 || trailer.Verdict != "REQUEST_CHANGES" || trailer.Findings != 1 || trailer.SessionID != "sess-uuid-1234" {
 			t.Fatalf("unexpected trailer: %+v", trailer)
 		}
 	}

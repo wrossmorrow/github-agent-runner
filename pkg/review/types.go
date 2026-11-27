@@ -24,6 +24,7 @@ type Request struct {
 	Tag            string `json:"tag,omitempty"`
 	Environment    string `json:"environment,omitempty"`
 	EnvironmentURL string `json:"environmentUrl,omitempty"`
+	SessionID      string `json:"sessionId,omitempty"`
 }
 
 // Comment represents an inline review finding returned by pi.
@@ -47,9 +48,10 @@ type Result struct {
 
 // Outcome summarizes a completed review step for the caller.
 type Outcome struct {
-	Result   *Result `json:"result"`
-	ExitCode int     `json:"exitCode"`
-	Turns    int     `json:"turns"`
+	SessionID string  `json:"sessionId,omitempty"`
+	Result    *Result `json:"result"`
+	ExitCode  int     `json:"exitCode"`
+	Turns     int     `json:"turns"`
 }
 
 // ShouldFail reports whether any comment meets the configured fail-on threshold.

@@ -118,6 +118,15 @@ func TestDeploymentValidate(t *testing.T) {
 		t.Fatalf("expected empty protectedBranches slice to be valid, got %v", err)
 	}
 
+	withSessionSink := validDeployment()
+	withSessionSink.Spec.Agent.SessionSink = &SessionSinkSpec{
+		Endpoint:      "http://session-hub.session-system.svc.cluster.local:8080/v1/sessions",
+		AuthSecretRef: &SecretRef{Name: "session-sink-token"},
+	}
+	if err := withSessionSink.Validate(); err != nil {
+		t.Fatalf("expected valid sessionSink to pass validation, got %v", err)
+	}
+
 	negRetries := -1
 	badProtected := []string{"main", "bad branch"}
 	cases := []struct {
@@ -245,6 +254,13 @@ func TestDeploymentValidate(t *testing.T) {
 				d.Spec.Agent.ProtectedBranches = &blank
 			},
 			wantErr: "protectedBranches",
+		},
+		{
+			name: "invalid sessionSink endpoint",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.SessionSink = &SessionSinkSpec{Endpoint: "not-a-url"}
+			},
+			wantErr: "sessionSink.endpoint",
 		},
 	}
 

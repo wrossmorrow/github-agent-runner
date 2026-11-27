@@ -98,6 +98,7 @@ type AgentSpec struct {
 	Limits                LimitsSpec       `json:"limits,omitempty"`
 	EgressAllowlist       []string         `json:"egressAllowlist,omitempty"`
 	ProtectedBranches     *[]string        `json:"protectedBranches,omitempty"`
+	SessionSink           *SessionSinkSpec `json:"sessionSink,omitempty"`
 	SystemPromptRef       *ConfigMapKeyRef `json:"systemPromptRef,omitempty"`
 	AgentsMD              string           `json:"agentsMd,omitempty"`
 	GitHubAppSecretRef    *SecretRef       `json:"githubAppSecretRef,omitempty"`
@@ -108,6 +109,12 @@ type AgentSpec struct {
 
 // GatewaySpec points pi at an external Model Gateway / Agent Router.
 type GatewaySpec struct {
+	Endpoint      string     `json:"endpoint"`
+	AuthSecretRef *SecretRef `json:"authSecretRef,omitempty"`
+}
+
+// SessionSinkSpec configures an optional HTTP endpoint for fail-open session transcript archival.
+type SessionSinkSpec struct {
 	Endpoint      string     `json:"endpoint"`
 	AuthSecretRef *SecretRef `json:"authSecretRef,omitempty"`
 }
@@ -211,6 +218,11 @@ func (d *AgenticRunnerDeployment) Validate() error {
 	}
 	if err := validateURL(d.Spec.Agent.Gateway.Endpoint, "spec.agent.gateway.endpoint"); err != nil {
 		errs = append(errs, err)
+	}
+	if d.Spec.Agent.SessionSink != nil {
+		if err := validateURL(d.Spec.Agent.SessionSink.Endpoint, "spec.agent.sessionSink.endpoint"); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if d.Spec.Agent.Limits.MaxTurns < 0 {
 		errs = append(errs, errors.New("spec.agent.limits.maxTurns must be >= 0"))

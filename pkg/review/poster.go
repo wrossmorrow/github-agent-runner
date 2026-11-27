@@ -96,14 +96,16 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 		if issueNum <= 0 {
 			return fmt.Errorf("issueNumber is required to post output %q", req.Output)
 		}
-		args := []string{"issue", "comment", strconv.Itoa(issueNum), "--repo", req.Repo, "--body", formatReviewMarkdown(res)}
+		issueBody := appendSessionFooter(formatReviewMarkdown(res), req.SessionID)
+		args := []string{"issue", "comment", strconv.Itoa(issueNum), "--repo", req.Repo, "--body", issueBody}
 		_, err := runGH(ctx, ghBin, token, args, nil)
 		return err
 	case OutputComment:
 		if req.PRNumber <= 0 {
 			return fmt.Errorf("repo and prNumber are required to post output %q", req.Output)
 		}
-		args := []string{"pr", "comment", strconv.Itoa(req.PRNumber), "--repo", req.Repo, "--body", formatReviewMarkdown(res)}
+		commentBody := appendSessionFooter(formatReviewMarkdown(res), req.SessionID)
+		args := []string{"pr", "comment", strconv.Itoa(req.PRNumber), "--repo", req.Repo, "--body", commentBody}
 		_, err := runGH(ctx, ghBin, token, args, nil)
 		return err
 	case OutputPRReview, OutputSuggest:
@@ -122,7 +124,7 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 
 		payload, err := json.Marshal(map[string]any{
 			"event":    mapEvent(res.Verdict),
-			"body":     formatPRReviewBody(res, inline, offDiff),
+			"body":     appendSessionFooter(formatPRReviewBody(res, inline, offDiff), req.SessionID),
 			"comments": inlineGH,
 		})
 		if err != nil {
@@ -133,7 +135,7 @@ func (p *GhPoster) PostReview(ctx context.Context, req Request, res *Result) err
 		if err != nil && len(inlineGH) > 0 && isHTTP422(out) {
 			fallbackPayload, merr := json.Marshal(map[string]any{
 				"event":    mapEvent(res.Verdict),
-				"body":     formatReviewMarkdown(res),
+				"body":     appendSessionFooter(formatReviewMarkdown(res), req.SessionID),
 				"comments": []map[string]any{},
 			})
 			if merr != nil {
@@ -236,6 +238,14 @@ func mapEvent(verdict string) string {
 	default:
 		return "COMMENT"
 	}
+}
+
+func appendSessionFooter(body, sessionID string) string {
+	id := strings.TrimSpace(sessionID)
+	if id == "" {
+		return body
+	}
+	return strings.TrimRight(body, "\n") + "\n\n<!-- agentrunner-session: " + id + " -->\n"
 }
 
 func formatReviewMarkdown(res *Result) string {

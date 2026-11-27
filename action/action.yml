@@ -38,6 +38,9 @@ outputs:
   exit-code:
     description: Exit code determined from fail-on threshold
     value: ${{ steps.run.outputs.exit-code }}
+  session-id:
+    description: Unique session UUID generated for this agent run
+    value: ${{ steps.run.outputs.session-id }}
 runs:
   using: composite
   steps:
@@ -97,6 +100,7 @@ runs:
         findings="$(printf '%s' "$result_json" | jq -r '.findings // 0')"
         turns="$(printf '%s' "$result_json" | jq -r '.turns // 0')"
         exit_code="$(printf '%s' "$result_json" | jq -r '.exitCode // 1')"
+        session_id="$(printf '%s' "$result_json" | jq -r '.sessionId // ""')"
 
         if [ -n "${GITHUB_OUTPUT:-}" ]; then
           eof_delim="AGENTRUNNER_EOF_$$_${RANDOM}"
@@ -105,6 +109,7 @@ runs:
             printf 'findings=%s\n' "$findings"
             printf 'turns=%s\n' "$turns"
             printf 'exit-code=%s\n' "$exit_code"
+            printf 'session-id=%s\n' "$session_id"
             printf 'summary<<%s\n%s\n%s\n' "$eof_delim" "$summary" "$eof_delim"
           } >> "$GITHUB_OUTPUT"
         fi
