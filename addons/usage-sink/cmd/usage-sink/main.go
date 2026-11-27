@@ -39,8 +39,14 @@ func main() {
 	)
 	flag.Parse()
 
+	explicitFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) {
+		explicitFlags[f.Name] = true
+	})
+
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	effectiveMode := resolveMode(*mode, os.Getenv("USAGE_SINK_DUCKDB_PATH"), *mdDatabase)
+	duckdbPathSet := strings.TrimSpace(os.Getenv("USAGE_SINK_DUCKDB_PATH")) != "" || explicitFlags["duckdb-path"]
+	effectiveMode := resolveMode(*mode, duckdbPathSet, *mdDatabase)
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
@@ -124,10 +130,8 @@ func main() {
 		stop()
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
 	hs.Shutdown()
+	grpcStopCtx, grpcStopCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	stopped := make(chan struct{})
 	go func() {
 		grpcSrv.GracefulStop()
@@ -135,27 +139,31 @@ func main() {
 	}()
 	select {
 	case <-stopped:
-	case <-shutdownCtx.Done():
+	case <-grpcStopCtx.Done():
 		grpcSrv.Stop()
 	}
+	grpcStopCancel()
 
-	if err := alsSrv.Close(shutdownCtx); err != nil {
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer drainCancel()
+
+	if err := alsSrv.Close(drainCtx); err != nil {
 		logger.Warn("als queue drain incomplete", slog.Any("error", err))
 	}
-	if err := multi.Close(shutdownCtx); err != nil {
+	if err := multi.Close(drainCtx); err != nil {
 		logger.Warn("sink close/flush reported errors", slog.Any("error", err))
 	}
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+	if err := httpSrv.Shutdown(drainCtx); err != nil {
 		logger.Warn("http shutdown error", slog.Any("error", err))
 	}
 }
 
-func resolveMode(explicit, envDBPath, mdDatabase string) string {
+func resolveMode(explicit string, duckdbPathSet bool, mdDatabase string) string {
 	m := strings.ToLower(strings.TrimSpace(explicit))
 	if m != "" {
 		return m
 	}
-	if strings.TrimSpace(mdDatabase) != "" || strings.TrimSpace(envDBPath) != "" {
+	if strings.TrimSpace(mdDatabase) != "" || duckdbPathSet {
 		return "duckdb"
 	}
 	return "stdout"
