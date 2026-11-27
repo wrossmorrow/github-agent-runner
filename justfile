@@ -54,7 +54,7 @@ containerize toolchain="agent" tag="latest" *args="":
         images/toolchains/matrix.json)
     docker build -f images/toolchains/Dockerfile \
         --target "{{ toolchain }}" \
-        "${build_args[@]}" \
+        "${build_args[@]+"${build_args[@]}"}" \
         {{ args }} \
         -t "{{ image_repository }}/{{ image_name_prefix }}-{{ toolchain }}:{{ tag }}" .
 

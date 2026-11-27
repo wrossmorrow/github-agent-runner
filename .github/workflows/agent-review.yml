@@ -3,6 +3,11 @@ name: Agent Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'docs/**'
 
 permissions:
   contents: read
@@ -13,7 +18,15 @@ concurrency:
 
 jobs:
   review:
-    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: >-
+      ${{
+        !github.event.pull_request.draft &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor != 'dependabot[bot]' &&
+        github.actor != 'renovate[bot]' &&
+        !contains(github.event.pull_request.labels.*.name, 'skip-agent-review') &&
+        !contains(github.event.pull_request.title, '[skip review]')
+      }}
     runs-on: github-agent-runner-review
     timeout-minutes: 15
     steps:
@@ -22,7 +35,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: ./action
+      - id: gate
+        run: |
+          commit_msg="$(git log -1 --pretty=%B HEAD^2 2>/dev/null || git log -1 --pretty=%B HEAD)"
+          if printf '%s\n' "$commit_msg" | grep -qiE '\[skip (agent-)?review\]'; then
+            echo "::notice::Skipping agent review due to commit opt-out marker."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.skip != 'true'
+        uses: ./action
         with:
           instructions: |
             Review the PR diff against ${{ github.base_ref }}.
