@@ -117,15 +117,15 @@ func readJSON[T any](path string) (*T, error) {
 func exampleObjects() (*v1alpha1.AgenticRunnerDeployment, *v1alpha1.AgenticRunnerToolchain) {
 	tc := &v1alpha1.AgenticRunnerToolchain{
 		TypeMeta: v1alpha1.TypeMeta{APIVersion: v1alpha1.Group + "/" + v1alpha1.Version, Kind: "AgenticRunnerToolchain"},
-		Metadata: v1alpha1.ObjectMeta{Name: "go-1.23"},
+		Metadata: v1alpha1.ObjectMeta{Name: "go-1.26"},
 		Spec: v1alpha1.AgenticRunnerToolchainSpec{
-			Image: "ghcr.io/org/agentrunner-go:1.23",
+			Image: "ghcr.io/wrossmorrow/agentrunner-golang:1.26",
 			Resources: v1alpha1.ResourceRequirements{
 				Requests: map[string]string{"cpu": "2", "memory": "4Gi"},
 				Limits:   map[string]string{"cpu": "4", "memory": "8Gi"},
 			},
 			EgressAllowlist: []string{"proxy.golang.org", "sum.golang.org"},
-			AgentsMD:        "Toolchain: Go 1.23, golangci-lint, protoc, buf, git, gh.\nPrefer `go test -race ./...` when validating Go changes.",
+			AgentsMD:        "Toolchain: Go 1.26, protoc, buf, git, gh.\nPrefer `go test -race ./...` when validating Go changes.",
 		},
 	}
 	dep := &v1alpha1.AgenticRunnerDeployment{
@@ -139,7 +139,7 @@ func exampleObjects() (*v1alpha1.AgenticRunnerDeployment, *v1alpha1.AgenticRunne
 				MinRunners:         0,
 				MaxRunners:         5,
 			},
-			ToolchainRef: v1alpha1.LocalRef{Name: "go-1.23"},
+			ToolchainRef: v1alpha1.LocalRef{Name: "go-1.26"},
 			Agent: v1alpha1.AgentSpec{
 				Harness: "pi",
 				Model:   "claude-sonnet-4-5",
