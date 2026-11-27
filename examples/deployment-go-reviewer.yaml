@@ -11,7 +11,7 @@ spec:
     minRunners: 0
     maxRunners: 5
   toolchainRef:
-    name: go-1.23
+    name: go-1.26
   agent:
     harness: pi
     model: claude-sonnet-4-5

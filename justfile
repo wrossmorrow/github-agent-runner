@@ -42,10 +42,11 @@ render-example:
 render-summary:
     go run ./cmd/agentrunner-render --example | jq -r '.[] | "\(.kind)/\(.metadata.name)"'
 
-# build a toolchain sidecar image stage (agent, python, golang, rust, java17, java21)
-containerize toolchain="agent" tag="latest":
+# build a toolchain sidecar image stage (agent, python, golang, rust, java)
+containerize toolchain="agent" tag="latest" *args="":
     docker build -f images/toolchains/Dockerfile \
         --target {{ toolchain }} \
+        {{ args }} \
         -t {{ image_repository }}/{{ image_name_prefix }}-{{ toolchain }}:{{ tag }} .
 
 # build the github-auth token-minter sidecar image

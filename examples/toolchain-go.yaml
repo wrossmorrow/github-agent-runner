@@ -1,9 +1,9 @@
 apiVersion: agentic.example.io/v1alpha1
 kind: AgenticRunnerToolchain
 metadata:
-  name: go-1.23
+  name: go-1.26
 spec:
-  image: ghcr.io/org/agentrunner-go:1.23
+  image: ghcr.io/wrossmorrow/agentrunner-golang:1.26
   resources:
     requests:
       cpu: "2"
@@ -15,5 +15,5 @@ spec:
     - proxy.golang.org
     - sum.golang.org
   agentsMd: |
-    Toolchain: Go 1.23, golangci-lint, protoc, buf, git, gh.
+    Toolchain: Go 1.26, protoc, buf, git, gh.
     Prefer `go test -race ./...` when validating Go changes.

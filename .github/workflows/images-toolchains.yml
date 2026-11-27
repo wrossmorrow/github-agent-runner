@@ -16,20 +16,22 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/images-toolchains.yml'
+  schedule:
+    # Weekly rebuild to pick up upstream base OS / JDK / language patch updates on main
+    - cron: '0 6 * * 1'
   workflow_dispatch:
     inputs:
       toolchain:
-        description: Toolchain target to build
+        description: Toolchain package to build
         type: choice
         default: all
         options:
           - all
           - agent
-          - python
           - golang
+          - python
           - rust
-          - java17
-          - java21
+          - java
       push:
         description: Push built images to GHCR
         type: boolean
@@ -51,37 +53,61 @@ jobs:
     name: Select toolchains
     runs-on: ubuntu-latest
     outputs:
+      build_agent: ${{ steps.set.outputs.build_agent }}
+      push_agent: ${{ steps.set.outputs.push_agent }}
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v7
+
       - id: set
         env:
           EVENT_NAME: ${{ github.event_name }}
           TARGET: ${{ inputs.toolchain }}
+          PUSH_INPUT: ${{ inputs.push }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$TARGET" ] && [ "$TARGET" != "all" ]; then
-            echo "matrix=[\"${TARGET}\"]" >> "$GITHUB_OUTPUT"
-          else
-            echo 'matrix=["agent","python","golang","rust","java17","java21"]' >> "$GITHUB_OUTPUT"
+          build_agent=true
+          push_images=false
+          if [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "schedule" ] || { [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$PUSH_INPUT" = "true" ]; }; then
+            push_images=true
           fi
 
-  toolchains:
-    name: Toolchain (${{ matrix.toolchain }})
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            matrix="$(jq -c '[.[] | select(.is_default == true)]' images/toolchains/matrix.json)"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$TARGET" ] && [ "$TARGET" != "all" ]; then
+            if [ "$TARGET" = "agent" ]; then
+              matrix='[]'
+            else
+              build_agent=false
+              matrix="$(jq -c --arg name "$TARGET" '[.[] | select(.name == $name)]' images/toolchains/matrix.json)"
+            fi
+          else
+            matrix="$(jq -c '.' images/toolchains/matrix.json)"
+          fi
+
+          push_agent=false
+          if [ "$build_agent" = "true" ] && [ "$push_images" = "true" ]; then
+            push_agent=true
+          fi
+
+          echo "build_agent=${build_agent}" >> "$GITHUB_OUTPUT"
+          echo "push_agent=${push_agent}" >> "$GITHUB_OUTPUT"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  agent:
+    name: Base agent image
     needs: plan
+    if: needs.plan.outputs.build_agent == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: docker/setup-qemu-action@v4
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push)
+        if: needs.plan.outputs.push_agent == 'true'
 
       - uses: docker/setup-buildx-action@v4
 
       - uses: docker/login-action@v4
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push)
+        if: needs.plan.outputs.push_agent == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -90,7 +116,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-${{ matrix.toolchain }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-agent
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -98,14 +124,146 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - uses: docker/build-push-action@v7
+      - name: Build and smoke-test agent (amd64)
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/toolchains/Dockerfile
-          target: ${{ matrix.toolchain }}
-          platforms: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push)) && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-          push: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+          target: agent
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-agent:smoke
+          cache-from: type=gha,scope=toolchain-agent
+          cache-to: type=gha,mode=max,scope=toolchain-agent
+
+      - name: Smoke test agent
+        run: |
+          docker run --rm --entrypoint /bin/bash \
+            "${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-agent:smoke" \
+            -lc 'test -x /usr/local/bin/agentrunnerd && pi --version && gh --version && shellcheck --version && yq --version'
+
+      - name: Push multi-arch agent image
+        if: needs.plan.outputs.push_agent == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: images/toolchains/Dockerfile
+          target: agent
+          platforms: linux/amd64,linux/arm64
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=toolchain-${{ matrix.toolchain }}
-          cache-to: type=gha,mode=max,scope=toolchain-${{ matrix.toolchain }}
+          cache-from: type=gha,scope=toolchain-agent
+          cache-to: type=gha,mode=max,scope=toolchain-agent
+
+  toolchains:
+    name: Toolchain (${{ matrix.name }}-${{ matrix.minor }})
+    needs: [plan, agent]
+    if: ${{ !cancelled() && needs.plan.outputs.matrix != '[]' && (needs.agent.result == 'success' || needs.agent.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+        if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.push)
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.push)
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta_prefixed
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-${{ matrix.name }}
+          flavor: |
+            prefix=${{ matrix.minor }}-
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - id: meta_minor
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-${{ matrix.name }}
+          tags: |
+            type=raw,value=${{ matrix.minor }},enable=${{ !startsWith(github.ref, 'refs/pull/') }}
+
+      - id: meta_default
+        if: matrix.is_default
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-${{ matrix.name }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - id: tags
+        env:
+          PREFIXED_TAGS: ${{ steps.meta_prefixed.outputs.tags }}
+          MINOR_TAGS: ${{ steps.meta_minor.outputs.tags }}
+          DEFAULT_TAGS: ${{ steps.meta_default.outputs.tags }}
+        run: |
+          {
+            printf '%s\n' "$PREFIXED_TAGS"
+            printf '%s\n' "$MINOR_TAGS"
+            printf '%s\n' "$DEFAULT_TAGS"
+          } | awk 'NF' | {
+            echo 'tags<<EOF'
+            cat
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and smoke-test toolchain (amd64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: images/toolchains/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-${{ matrix.name }}:${{ matrix.minor }}-smoke
+          build-args: ${{ join(matrix.build_args, '\n') }}
+          cache-from: |
+            type=gha,scope=toolchain-${{ matrix.name }}-${{ matrix.minor }}
+            type=gha,scope=toolchain-agent
+          cache-to: type=gha,mode=max,scope=toolchain-${{ matrix.name }}-${{ matrix.minor }}
+
+      - name: Smoke test toolchain
+        env:
+          SMOKE_CMD: ${{ matrix.smoke_cmd }}
+        run: |
+          docker run --rm --entrypoint /bin/bash \
+            "${{ env.REGISTRY }}/${{ github.repository_owner }}/agentrunner-${{ matrix.name }}:${{ matrix.minor }}-smoke" \
+            -lc "test -x /usr/local/bin/agentrunnerd && pi --version && ${SMOKE_CMD}"
+
+      - name: Push multi-arch toolchain image
+        if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: images/toolchains/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.meta_prefixed.outputs.labels }}
+          build-args: ${{ join(matrix.build_args, '\n') }}
+          cache-from: |
+            type=gha,scope=toolchain-${{ matrix.name }}-${{ matrix.minor }}
+            type=gha,scope=toolchain-agent
+          cache-to: type=gha,mode=max,scope=toolchain-${{ matrix.name }}-${{ matrix.minor }}
