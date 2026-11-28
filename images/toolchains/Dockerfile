@@ -13,6 +13,7 @@ ARG YQ_VERSION=4.54.3
 ARG UV_VERSION=0.13.10
 ARG PYTHON_VERSION=3.13.18
 ARG GO_VERSION=1.27.4
+ARG GOLANGCI_LINT_VERSION=2.15.0
 ARG RUST_VERSION=1.99.1
 ARG JAVA_VERSION=21
 
@@ -152,6 +153,7 @@ USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG GO_VERSION
+ARG GOLANGCI_LINT_VERSION
 ARG PROTOC_GEN_GO_VERSION
 ARG PROTOC_GEN_GO_GRPC_VERSION
 ARG PROTOC_GEN_CONNECT_GO_VERSION
@@ -166,6 +168,7 @@ ENV GOTOOLCHAIN=local
 RUN GOBIN=/usr/local/bin go install "google.golang.org/protobuf/cmd/protoc-gen-go@v${PROTOC_GEN_GO_VERSION}" \
     && GOBIN=/usr/local/bin go install "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v${PROTOC_GEN_GO_GRPC_VERSION}" \
     && GOBIN=/usr/local/bin go install "connectrpc.com/connect/cmd/protoc-gen-connect-go@v${PROTOC_GEN_CONNECT_GO_VERSION}" \
+    && GOBIN=/usr/local/bin go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v${GOLANGCI_LINT_VERSION}" \
     && rm -rf /root/go /root/.cache/go-build
 
 USER node

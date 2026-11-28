@@ -5,7 +5,7 @@
     "minor": "1.26",
     "is_default": false,
     "build_args": ["GO_VERSION=1.26.10"],
-    "smoke_cmd": "go version | grep -F 'go1.26.10'"
+    "smoke_cmd": "go version | grep -F 'go1.26.10' && golangci-lint --version"
   },
   {
     "name": "golang",
@@ -13,7 +13,7 @@
     "minor": "1.27",
     "is_default": true,
     "build_args": ["GO_VERSION=1.27.4"],
-    "smoke_cmd": "go version | grep -F 'go1.27.4'"
+    "smoke_cmd": "go version | grep -F 'go1.27.4' && golangci-lint --version"
   },
   {
     "name": "python",
