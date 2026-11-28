@@ -30,8 +30,9 @@ Respond with ONLY a single valid JSON object matching:
 
 	formatSuggestNudgePrompt = `Your previous response did not contain a valid JSON review object.
 Do not run any more tools. Apply the verdict rules exactly: APPROVE when zero error and zero warning findings (info-only notes still count as APPROVE), REQUEST_CHANGES when at least one error finding or a concrete blocking issue exists, COMMENT for warning-only or non-blocking feedback.
+Suggestion discipline: "suggestion" is rendered verbatim inside a GitHub "suggestion" code block on the inline review comment - it must be exact, drop-in replacement lines with matching indentation, never English prose or a description of the fix; omit "suggestion" entirely if the change is not a verbatim code edit.
 Respond with ONLY a single valid JSON object matching:
-{"verdict":"APPROVE"|"COMMENT"|"REQUEST_CHANGES","summary":"concise summary","comments":[{"path":"relative/path","startLine":10,"line":12,"severity":"info"|"warning"|"error","body":"comment","suggestion":"optional replacement code"}]}`
+{"verdict":"APPROVE"|"COMMENT"|"REQUEST_CHANGES","summary":"concise summary","comments":[{"path":"relative/path","startLine":10,"line":12,"severity":"info"|"warning"|"error","body":"comment","suggestion":"optional exact replacement code rendered verbatim (never prose; omit if not a verbatim code edit)"}]}`
 )
 
 // Config holds runtime settings loaded by agentrunnerd from /etc/agentrunner/config.json.
