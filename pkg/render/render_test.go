@@ -558,3 +558,85 @@ func TestRenderMCPServers(t *testing.T) {
 		t.Fatalf("unexpected MCP token secretKeyRef: %#v", sec)
 	}
 }
+
+func TestRenderMCPExternalNotInNoProxy(t *testing.T) {
+	dep, tc := sampleInputs()
+	dep.Spec.Agent.MCPServers = []v1alpha1.InlineMCPServerSpec{
+		{
+			Name: "internal-docs",
+			AgenticRunnerMCPServerSpec: v1alpha1.AgenticRunnerMCPServerSpec{
+				URL: "http://docs-mcp.platform.svc.cluster.local:8080/mcp",
+			},
+		},
+		{
+			Name: "external-saas",
+			AgenticRunnerMCPServerSpec: v1alpha1.AgenticRunnerMCPServerSpec{
+				URL: "https://mcp.external.example/mcp",
+			},
+		},
+	}
+
+	bundle, err := Render(dep, tc, Options{})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	squidConf := bundle.EgressConfigMap["data"].(map[string]string)["squid.conf"]
+	for _, want := range []string{"docs-mcp.platform.svc.cluster.local", "mcp.external.example"} {
+		if !strings.Contains(squidConf, "acl allowed_domains dstdomain "+want+"\n") {
+			t.Fatalf("squid.conf missing %q:\n%s", want, squidConf)
+		}
+	}
+
+	agentEnv := map[string]string{}
+	inits := bundle.AutoscalingRunnerSet["spec"].(K8sObject)["template"].(K8sObject)["spec"].(K8sObject)["initContainers"].([]K8sObject)
+	for _, ic := range inits {
+		if ic["name"] != "agent" {
+			continue
+		}
+		for _, e := range ic["env"].([]K8sObject) {
+			if v, ok := e["value"].(string); ok {
+				agentEnv[e["name"].(string)] = v
+			}
+		}
+	}
+
+	for _, key := range []string{"NO_PROXY", "no_proxy", "JAVA_TOOL_OPTIONS"} {
+		val := agentEnv[key]
+		if !strings.Contains(val, "docs-mcp.platform.svc.cluster.local") {
+			t.Fatalf("%s missing internal MCP host: %q", key, val)
+		}
+		if strings.Contains(val, "mcp.external.example") {
+			t.Fatalf("%s must not bypass proxy for external MCP host: %q", key, val)
+		}
+	}
+}
+
+func TestIsInternalHost(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{host: "docs-mcp.platform.svc.cluster.local", want: true},
+		{host: "docs-mcp.platform.svc", want: true},
+		{host: "agent-gateway.internal", want: true},
+		{host: "host.docker.internal", want: true},
+		{host: "docs-mcp", want: true},
+		{host: "127.0.0.1", want: true},
+		{host: "10.0.0.5", want: true},
+		{host: "192.168.1.10", want: true},
+		{host: "::1", want: true},
+		{host: "169.254.169.254", want: false},
+		{host: "fe80::1", want: false},
+		{host: "mcp.linear.app", want: false},
+		{host: "8.8.8.8", want: false},
+		{host: "2001:4860:4860::8888", want: false},
+		{host: "", want: false},
+	}
+
+	for _, tc := range cases {
+		if got := isInternalHost(tc.host); got != tc.want {
+			t.Errorf("isInternalHost(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
