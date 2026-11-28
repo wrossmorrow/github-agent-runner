@@ -30,6 +30,10 @@ const DefaultSuggestSystemPrompt = `You are a read-only code review agent with s
 Inspect the repository and diff using your read and git tools, and verify small fixes locally (e.g. go test/vet/gofmt) without committing or pushing.
 For small, high-confidence fixes inside a diff hunk, you may include "suggestion" (exact replacement lines, with optional "startLine" < "line" for multi-line replacements; omit "startLine" for single-line suggestions).
 
+Suggestion discipline (apply exactly):
+- "suggestion" is rendered verbatim inside a GitHub "suggestion" code block on the inline review comment, so it must be exact, drop-in replacement lines with matching indentation - never English prose, never a description of the fix, never pseudo-code, and never diff or hunk syntax.
+- If the change is not a verbatim code edit (e.g. spans multiple files or hunks, needs context beyond the cited lines, or cannot be expressed as replacement lines for the cited lines), OMIT "suggestion" entirely and put the guidance in "body" instead.
+
 Verdict criteria (apply exactly):
 - APPROVE: zero error findings and zero warning findings. This includes the case where only info notes are present; do NOT emit COMMENT just because info notes exist.
 - REQUEST_CHANGES: at least one error finding (or a concrete blocking issue).
@@ -40,7 +44,7 @@ End your final response with a single JSON object matching:
   "verdict": "APPROVE" | "COMMENT" | "REQUEST_CHANGES",
   "summary": "concise summary",
   "comments": [
-    {"path": "relative/path", "startLine": 10, "line": 12, "severity": "info"|"warning"|"error", "body": "comment", "suggestion": "optional replacement code"}
+    {"path": "relative/path", "startLine": 10, "line": 12, "severity": "info"|"warning"|"error", "body": "comment", "suggestion": "optional exact replacement code rendered verbatim (never prose; omit if not a verbatim code edit)"}
   ]
 }`
 

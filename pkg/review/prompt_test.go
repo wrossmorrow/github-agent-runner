@@ -37,6 +37,40 @@ func TestDefaultSuggestSystemPromptVerdictRules(t *testing.T) {
 	}
 }
 
+func TestDefaultSuggestSystemPromptSuggestionDiscipline(t *testing.T) {
+	for _, want := range []string{
+		"rendered verbatim inside a GitHub \"suggestion\" code block",
+		"exact, drop-in replacement lines with matching indentation",
+		"never English prose",
+		"OMIT \"suggestion\" entirely",
+		"not a verbatim code edit",
+		`"suggestion": "optional exact replacement code rendered verbatim (never prose; omit if not a verbatim code edit)"`,
+	} {
+		if !strings.Contains(DefaultSuggestSystemPrompt, want) {
+			t.Errorf("DefaultSuggestSystemPrompt missing suggestion discipline %q:\n%s", want, DefaultSuggestSystemPrompt)
+		}
+	}
+}
+
+func TestFormatSuggestNudgePromptSuggestionDiscipline(t *testing.T) {
+	for _, want := range []string{
+		"rendered verbatim inside a GitHub \"suggestion\" code block",
+		"exact, drop-in replacement lines with matching indentation",
+		"never English prose",
+		"omit \"suggestion\" entirely",
+		"not a verbatim code edit",
+		"optional exact replacement code rendered verbatim",
+	} {
+		if !strings.Contains(formatSuggestNudgePrompt, want) {
+			t.Errorf("formatSuggestNudgePrompt missing suggestion discipline %q:\n%s", want, formatSuggestNudgePrompt)
+		}
+	}
+	// The non-suggest nudge prompt must not carry the suggest-only discipline.
+	if strings.Contains(formatNudgePrompt, "drop-in replacement lines") {
+		t.Errorf("formatNudgePrompt should not enforce suggestion discipline:\n%s", formatNudgePrompt)
+	}
+}
+
 func TestFormatNudgePromptsVerdictRules(t *testing.T) {
 	for name, prompt := range map[string]string{
 		"formatNudgePrompt":        formatNudgePrompt,
