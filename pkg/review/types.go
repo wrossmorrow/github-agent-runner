@@ -39,16 +39,18 @@ type Comment struct {
 
 // Result is the structured JSON payload emitted by pi at the end of a run.
 type Result struct {
-	Verdict  string    `json:"verdict"` // APPROVE | COMMENT | REQUEST_CHANGES
-	Title    string    `json:"title,omitempty"`
-	Summary  string    `json:"summary"`
-	Body     string    `json:"body,omitempty"`
-	Comments []Comment `json:"comments"`
+	Verdict        string    `json:"verdict"` // APPROVE | COMMENT | REQUEST_CHANGES
+	Title          string    `json:"title,omitempty"`
+	Summary        string    `json:"summary"`
+	Body           string    `json:"body,omitempty"`
+	Comments       []Comment `json:"comments"`
+	OpenedPRNumber int       `json:"-"`
 }
 
 // Outcome summarizes a completed review step for the caller.
 type Outcome struct {
 	SessionID string  `json:"sessionId,omitempty"`
+	PRNumber  int     `json:"prNumber,omitempty"`
 	Result    *Result `json:"result"`
 	ExitCode  int     `json:"exitCode"`
 	Turns     int     `json:"turns"`

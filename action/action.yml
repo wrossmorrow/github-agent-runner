@@ -41,6 +41,9 @@ outputs:
   session-id:
     description: Unique session UUID generated for this agent run
     value: ${{ steps.run.outputs.session-id }}
+  pr-number:
+    description: Pull request number targeted or opened during this run (when applicable)
+    value: ${{ steps.run.outputs.pr-number }}
 runs:
   using: composite
   steps:
@@ -107,6 +110,7 @@ runs:
         turns="$(printf '%s' "$result_json" | jq -r '.turns // 0')"
         exit_code="$(printf '%s' "$result_json" | jq -r '.exitCode // 1')"
         session_id="$(printf '%s' "$result_json" | jq -r '.sessionId // ""')"
+        pr_number="$(printf '%s' "$result_json" | jq -r 'if (.prNumber // 0) > 0 then (.prNumber | tostring) else "" end')"
 
         if [ -n "${GITHUB_OUTPUT:-}" ]; then
           eof_delim="AGENTRUNNER_EOF_$$_${RANDOM}"
@@ -116,6 +120,7 @@ runs:
             printf 'turns=%s\n' "$turns"
             printf 'exit-code=%s\n' "$exit_code"
             printf 'session-id=%s\n' "$session_id"
+            printf 'pr-number=%s\n' "$pr_number"
             printf 'summary<<%s\n%s\n%s\n' "$eof_delim" "$summary" "$eof_delim"
           } >> "$GITHUB_OUTPUT"
         fi
@@ -126,6 +131,9 @@ runs:
             printf -- '- **Verdict:** `%s`\n' "${verdict:-N/A}"
             printf -- '- **Findings:** `%s`\n' "$findings"
             printf -- '- **Turns:** `%s`\n' "$turns"
+            if [ -n "$pr_number" ]; then
+              printf -- '- **PR:** #%s\n' "$pr_number"
+            fi
             if [ -n "$summary" ]; then
               printf '\n%s\n' "$summary"
             fi

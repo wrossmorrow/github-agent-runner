@@ -318,7 +318,7 @@ func TestGhPosterRevertPROpensPR(t *testing.T) {
 	}
 	argsFile := filepath.Join(dir, "gh-args.txt")
 	ghScript := filepath.Join(dir, "fake-gh.sh")
-	script := "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> \"" + argsFile + "\"\n"
+	script := "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> \"" + argsFile + "\"\nprintf 'https://github.com/org/repo/pull/57\\n'\n"
 	if err := os.WriteFile(ghScript, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -328,19 +328,23 @@ func TestGhPosterRevertPROpensPR(t *testing.T) {
 	}
 
 	poster := &GhPoster{TokenFile: tokenFile, GHBin: ghScript}
+	res := &Result{
+		Verdict: "REQUEST_CHANGES",
+		Title:   "revert: roll back abcdef1",
+		Summary: "Smoke check failed.",
+	}
 	err := poster.PostReview(context.Background(), Request{
 		Workspace: workDir,
 		Repo:      "org/repo",
 		Output:    OutputRevertPR,
 		HeadSHA:   "abcdef1234567890",
 		BaseRef:   "main",
-	}, &Result{
-		Verdict: "REQUEST_CHANGES",
-		Title:   "revert: roll back abcdef1",
-		Summary: "Smoke check failed.",
-	})
+	}, res)
 	if err != nil {
 		t.Fatalf("PostReview revert-pr failed: %v", err)
+	}
+	if res.OpenedPRNumber != 57 {
+		t.Fatalf("expected OpenedPRNumber=57 from gh pr create URL, got %d", res.OpenedPRNumber)
 	}
 
 	if out, err := exec.Command("git", "-C", bareDir, "rev-parse", "--verify", "refs/heads/bot/revert-abcdef123456").CombinedOutput(); err != nil {
@@ -378,19 +382,23 @@ func TestGhPosterOpenPRSkipsCreateWhenExistingOpenPR(t *testing.T) {
 	}
 
 	poster := &GhPoster{TokenFile: tokenFile, GHBin: ghScript}
+	res := &Result{
+		Verdict: "COMMENT",
+		Title:   "fix: retry update",
+		Summary: "Updated existing PR branch.",
+	}
 	err := poster.PostReview(context.Background(), Request{
 		Workspace:    workDir,
 		Repo:         "org/repo",
 		Output:       OutputBranchCommit,
 		TargetBranch: "bot/fix-42",
 		OpenPR:       true,
-	}, &Result{
-		Verdict: "COMMENT",
-		Title:   "fix: retry update",
-		Summary: "Updated existing PR branch.",
-	})
+	}, res)
 	if err != nil {
 		t.Fatalf("expected existing PR check to succeed without gh pr create, got: %v", err)
+	}
+	if res.OpenedPRNumber != 42 {
+		t.Fatalf("expected OpenedPRNumber=42 from existing open PR, got %d", res.OpenedPRNumber)
 	}
 
 	if out, err := exec.Command("git", "-C", bareDir, "rev-parse", "--verify", "refs/heads/bot/fix-42").CombinedOutput(); err != nil {
@@ -462,4 +470,21 @@ func TestGhPosterDetachedHEADResolution(t *testing.T) {
 			t.Fatalf("expected detached HEAD error, got %v", err)
 		}
 	})
+}
+
+func TestParsePRNumberFromURL(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{raw: "https://github.com/org/repo/pull/43\n", want: 43},
+		{raw: "warning: something\nhttps://github.example.com/org/repo/pull/128?foo=bar\n", want: 128},
+		{raw: "not a pull request url", want: 0},
+		{raw: "https://github.com/org/repo/pull/0", want: 0},
+	}
+	for _, tc := range cases {
+		if got := parsePRNumberFromURL(tc.raw); got != tc.want {
+			t.Errorf("parsePRNumberFromURL(%q) = %d, want %d", tc.raw, got, tc.want)
+		}
+	}
 }

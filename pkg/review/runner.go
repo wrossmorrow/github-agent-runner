@@ -84,10 +84,10 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	if IsWriteOutput(req.Output) {
 		dirty, err := listChangedPaths(ctx, req.Workspace)
 		if err != nil {
-			return nil, fmt.Errorf("checking workspace git status before write-branch run: %w", err)
+			return &Outcome{PRNumber: req.PRNumber}, fmt.Errorf("checking workspace git status before write-branch run: %w", err)
 		}
 		if len(dirty) > 0 {
-			return nil, fmt.Errorf("workspace has pre-existing uncommitted changes before write-branch run (%d path(s), e.g. %q); ensure the workspace is clean before invoking write outputs", len(dirty), dirty[0])
+			return &Outcome{PRNumber: req.PRNumber}, fmt.Errorf("workspace has pre-existing uncommitted changes before write-branch run (%d path(s), e.g. %q); ensure the workspace is clean before invoking write outputs", len(dirty), dirty[0])
 		}
 	}
 	if req.Output == OutputReleaseDraft && req.BaseRef == "" {
@@ -104,7 +104,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	agentsMD, err := AssembleSystemPrompt(r.Config.AgentsDirs, r.Config.Mode, req.Output)
 	if err != nil {
-		return nil, err
+		return &Outcome{PRNumber: req.PRNumber}, err
 	}
 
 	diffStat := readDiffStat(ctx, req.Workspace, req.BaseRef, req.HeadSHA)
@@ -115,7 +115,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	sessionID, err := resolveSessionID(req.SessionID)
 	if err != nil {
-		return nil, err
+		return &Outcome{PRNumber: req.PRNumber}, err
 	}
 	req.SessionID = sessionID
 	sessionKind := deriveSessionKind(r.Config.Mode, req.Output)
@@ -125,7 +125,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	gatewayToken := strings.TrimSpace(os.Getenv("AGENT_GATEWAY_TOKEN"))
 	piDir, err := writePiConfigDir(r.Config, req, agentsMD, gatewayToken, sessionID, sessionKind, sessionName)
 	if err != nil {
-		return &Outcome{SessionID: sessionID}, err
+		return &Outcome{SessionID: sessionID, PRNumber: req.PRNumber}, err
 	}
 	defer func() { _ = os.RemoveAll(piDir) }()
 	sessionFile := filepath.Join(piDir, sessionID+".jsonl")
@@ -149,7 +149,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	client := pirpc.NewClient(bin, args, req.Workspace, env)
 	client.Stderr = logOut
 	if err := client.Start(); err != nil {
-		return &Outcome{SessionID: sessionID}, fmt.Errorf("starting pi rpc: %w", err)
+		return &Outcome{SessionID: sessionID, PRNumber: req.PRNumber}, fmt.Errorf("starting pi rpc: %w", err)
 	}
 
 	var outcome *Outcome
@@ -173,12 +173,16 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 			case ctx.Err() == context.DeadlineExceeded:
 				endReason = "timeout"
 			}
+			prNumber := req.PRNumber
+			if outcome != nil && outcome.PRNumber > 0 {
+				prNumber = outcome.PRNumber
+			}
 			meta := SessionArchiveMetadata{
 				SessionID:   sessionID,
 				SessionKind: sessionKind,
 				SessionName: sessionName,
 				Repo:        req.Repo,
-				PRNumber:    req.PRNumber,
+				PRNumber:    prNumber,
 				IssueNumber: req.IssueNumber,
 				RunID:       req.RunID,
 				HeadSHA:     req.HeadSHA,
@@ -225,7 +229,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		ctx, client, events, userPrompt, transientRetryPrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
 	)
 	if err != nil {
-		return &Outcome{SessionID: sessionID, Turns: turns}, err
+		return &Outcome{SessionID: sessionID, PRNumber: req.PRNumber, Turns: turns}, err
 	}
 
 	var reviewRes *Result
@@ -243,7 +247,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 				ctx, client, events, nudgePrompt, nudgePrompt, agentsMD, maxRetries, backoff, r.Config.Limits.MaxTurns, &turns, logOut,
 			)
 			if nudgeErr != nil {
-				return &Outcome{SessionID: sessionID, Turns: turns}, nudgeErr
+				return &Outcome{SessionID: sessionID, PRNumber: req.PRNumber, Turns: turns}, nudgeErr
 			}
 			finalText = nudgeText
 			reviewRes, err = ExtractReviewResult(finalText)
@@ -257,12 +261,12 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 			preview = preview[:400] + "..."
 		}
 		_, _ = fmt.Fprintf(logOut, "pi final assistant text: %s\n", preview)
-		return &Outcome{SessionID: sessionID, Turns: turns}, err
+		return &Outcome{SessionID: sessionID, PRNumber: req.PRNumber, Turns: turns}, err
 	}
 
 	if r.Poster != nil {
 		if err := r.Poster.PostReview(ctx, req, reviewRes); err != nil {
-			return &Outcome{SessionID: sessionID, Turns: turns}, fmt.Errorf("posting review: %w", err)
+			return &Outcome{SessionID: sessionID, PRNumber: req.PRNumber, Turns: turns}, fmt.Errorf("posting review: %w", err)
 		}
 	}
 
@@ -271,8 +275,14 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		exitCode = 1
 	}
 
+	prNumber := req.PRNumber
+	if reviewRes.OpenedPRNumber > 0 {
+		prNumber = reviewRes.OpenedPRNumber
+	}
+
 	outcome = &Outcome{
 		SessionID: sessionID,
+		PRNumber:  prNumber,
 		Result:    reviewRes,
 		ExitCode:  exitCode,
 		Turns:     turns,
