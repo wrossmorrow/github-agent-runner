@@ -212,7 +212,7 @@ spec:
    - Emits resolved MCP metadata into `config.json` and appends each server's `agentsMd` fragment into `/etc/agentrunner/`.
 3. **Sidecar (`cmd/agentrunnerd/`, `pkg/review/`)**:
    - Writes `$PI_CODING_AGENT_DIR/mcp.json` (`0600`) per run with resolved `url` + `Authorization: Bearer ...` headers (or `command`/`args` for offline-safe stdio binaries pre-baked into the toolchain image).
-   - Filters `AGENTRUNNER_MCP_TOKEN_*` out of `buildChildEnv` (mirroring `AGENT_GATEWAY_TOKEN` and `SESSION_SINK_TOKEN`) so repo-controlled code run by `pi` cannot read raw MCP tokens via shell env inspection.
+   - Filters `AGENTRUNNER_MCP_TOKEN_*` out of `buildChildEnv` (mirroring `AGENT_GATEWAY_TOKEN` and `SESSION_SINK_TOKEN`) so repo-controlled code run by `pi` cannot read raw MCP tokens via shell env inspection. Like `models.json`, `$PI_CODING_AGENT_DIR/mcp.json` (`0600`) still contains resolved auth headers on the same UID/filesystem as `pi`, so it follows the same trust boundary.
 
 ### Guardrails & Dogfood Candidates
 - **Prefer remote HTTP MCPs** over stdio `npx -y` / `uvx` servers that attempt package downloads inside egress-locked pods; only allow stdio when the binary is baked into `AgenticRunnerToolchain`.

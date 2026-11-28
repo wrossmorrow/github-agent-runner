@@ -206,6 +206,14 @@ func resolveMCPServers(dep *v1alpha1.AgenticRunnerDeployment, available []*v1alp
 	for _, inline := range dep.Spec.Agent.MCPServers {
 		upsert(toResolved(inline.Name, inline.AgenticRunnerMCPServerSpec))
 	}
+	seenTokenEnv := map[string]string{}
+	for _, m := range out {
+		envName := mcpTokenEnvName(m.runtime.Name)
+		if prev, dup := seenTokenEnv[envName]; dup && prev != m.runtime.Name {
+			return nil, fmt.Errorf("MCP servers %q and %q collide on token env var %s", prev, m.runtime.Name, envName)
+		}
+		seenTokenEnv[envName] = m.runtime.Name
+	}
 	return out, nil
 }
 

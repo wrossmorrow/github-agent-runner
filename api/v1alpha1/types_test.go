@@ -279,6 +279,40 @@ func TestDeploymentValidate(t *testing.T) {
 			},
 			wantErr: "mcpServerRefs",
 		},
+		{
+			name: "duplicate mcpServerRefs name",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "docs"}, {Name: "docs"}}
+			},
+			wantErr: "duplicate spec.agent.mcpServerRefs name",
+		},
+		{
+			name: "normalized collision in mcpServerRefs",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "foo-bar"}, {Name: "foo_bar"}}
+			},
+			wantErr: "token-env normalization",
+		},
+		{
+			name: "normalized collision in inline mcpServers",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServers = []InlineMCPServerSpec{
+					{Name: "foo-bar", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/1"}},
+					{Name: "foo_bar", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/2"}},
+				}
+			},
+			wantErr: "token-env normalization",
+		},
+		{
+			name: "normalized collision across mcpServerRefs and inline mcpServers",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "foo-bar"}}
+				d.Spec.Agent.MCPServers = []InlineMCPServerSpec{
+					{Name: "foo_bar", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/2"}},
+				}
+			},
+			wantErr: "token-env normalization",
+		},
 	}
 
 	for _, tc := range cases {
@@ -290,6 +324,15 @@ func TestDeploymentValidate(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
 		})
+	}
+
+	overrideDep := validDeployment()
+	overrideDep.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "foo-bar"}}
+	overrideDep.Spec.Agent.MCPServers = []InlineMCPServerSpec{
+		{Name: "foo-bar", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/override"}},
+	}
+	if err := overrideDep.Validate(); err != nil {
+		t.Fatalf("expected exact-name inline MCP override to pass validation, got %v", err)
 	}
 }
 

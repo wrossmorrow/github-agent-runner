@@ -203,6 +203,10 @@ func isValidMCPServerName(name string) bool {
 	return len(name) > 0 && len(name) <= 63 && mcpServerNameRegex.MatchString(name)
 }
 
+func normalizeMCPServerKey(name string) string {
+	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"))
+}
+
 // Validate checks required fields and invariants on AgenticRunnerMCPServer.
 func (m *AgenticRunnerMCPServer) Validate() error {
 	var errs []error
@@ -294,10 +298,22 @@ func (d *AgenticRunnerDeployment) Validate() error {
 			errs = append(errs, err)
 		}
 	}
+	normToName := map[string]string{}
 	for i, ref := range d.Spec.Agent.MCPServerRefs {
 		if !isValidMCPServerName(ref.Name) {
 			errs = append(errs, fmt.Errorf("invalid spec.agent.mcpServerRefs[%d].name %q", i, ref.Name))
+			continue
 		}
+		norm := normalizeMCPServerKey(ref.Name)
+		if prev, dup := normToName[norm]; dup {
+			if prev == ref.Name {
+				errs = append(errs, fmt.Errorf("duplicate spec.agent.mcpServerRefs name %q", ref.Name))
+			} else {
+				errs = append(errs, fmt.Errorf("spec.agent.mcpServerRefs[%d].name %q collides with %q after token-env normalization", i, ref.Name, prev))
+			}
+			continue
+		}
+		normToName[norm] = ref.Name
 	}
 	seenInlineMCP := map[string]struct{}{}
 	for i, srv := range d.Spec.Agent.MCPServers {
@@ -306,7 +322,13 @@ func (d *AgenticRunnerDeployment) Validate() error {
 		} else if _, dup := seenInlineMCP[srv.Name]; dup {
 			errs = append(errs, fmt.Errorf("duplicate spec.agent.mcpServers name %q", srv.Name))
 		} else {
-			seenInlineMCP[srv.Name] = struct{}{}
+			norm := normalizeMCPServerKey(srv.Name)
+			if prev, dup := normToName[norm]; dup && prev != srv.Name {
+				errs = append(errs, fmt.Errorf("spec.agent.mcpServers[%d].name %q collides with %q after token-env normalization", i, srv.Name, prev))
+			} else {
+				seenInlineMCP[srv.Name] = struct{}{}
+				normToName[norm] = srv.Name
+			}
 		}
 		errs = append(errs, validateMCPServerSpec(fmt.Sprintf("spec.agent.mcpServers[%d]", i), srv.AgenticRunnerMCPServerSpec)...)
 	}
