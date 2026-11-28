@@ -91,12 +91,9 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		defer cancel()
 	}
 
-	agentsMD, err := AssembleAgentsMD(r.Config.AgentsDirs...)
+	agentsMD, err := AssembleSystemPrompt(r.Config.AgentsDirs, r.Config.Mode, req.Output)
 	if err != nil {
 		return nil, err
-	}
-	if agentsMD == "" {
-		agentsMD = selectDefaultSystemPrompt(r.Config.Mode, req.Output)
 	}
 
 	diffStat := readDiffStat(ctx, req.Workspace, req.BaseRef, req.HeadSHA)

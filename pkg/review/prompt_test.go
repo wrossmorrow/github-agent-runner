@@ -1,8 +1,12 @@
 package review
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wrossmorrow/github-agent-runner/api/v1alpha1"
 )
 
 func TestDefaultReviewerSystemPromptVerdictRules(t *testing.T) {
@@ -124,5 +128,104 @@ func TestExtractReviewResultApprove(t *testing.T) {
 	}
 	if got := mapEvent(res.Verdict); got != "APPROVE" {
 		t.Fatalf("mapEvent(extracted verdict) = %q, want APPROVE", got)
+	}
+}
+
+func writeAgentFragment(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAssembleSystemPromptNoFragmentsUsesDefault(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	cases := []struct {
+		name   string
+		mode   string
+		output string
+		want   string
+	}{
+		{"reviewer", v1alpha1.AgentModeReadOnly, OutputPRReview, DefaultReviewerSystemPrompt},
+		{"suggest", v1alpha1.AgentModeSuggest, OutputPRReview, DefaultSuggestSystemPrompt},
+		{"write-branch", v1alpha1.AgentModeWriteBranch, OutputBranchCommit, DefaultWriteBranchSystemPrompt},
+		{"release draft", v1alpha1.AgentModeReadOnly, OutputReleaseDraft, DefaultReleaseNotesSystemPrompt},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := AssembleSystemPrompt([]string{missing, ""}, tc.mode, tc.output)
+			if err != nil {
+				t.Fatalf("AssembleSystemPrompt: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want built-in default %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAssembleSystemPromptPrependsDefaultBeforeNonBaseFragments(t *testing.T) {
+	d1 := t.TempDir()
+	d2 := t.TempDir()
+	writeAgentFragment(t, d1, "15-toolchain-crd.md", "toolchain hints")
+	writeAgentFragment(t, d2, "10-org-policy.md", "org policy")
+
+	got, err := AssembleSystemPrompt([]string{d1, d2}, v1alpha1.AgentModeReadOnly, OutputPRReview)
+	if err != nil {
+		t.Fatalf("AssembleSystemPrompt: %v", err)
+	}
+	want := DefaultReviewerSystemPrompt + "\n\norg policy\n\ntoolchain hints"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestAssembleSystemPromptBaseFragmentOverridesDefault(t *testing.T) {
+	d1 := t.TempDir()
+	d2 := t.TempDir()
+	writeAgentFragment(t, d1, "15-toolchain-crd.md", "toolchain hints")
+	writeAgentFragment(t, d2, "00-base.md", "base override")
+
+	got, err := AssembleSystemPrompt([]string{d1, d2}, v1alpha1.AgentModeReadOnly, OutputPRReview)
+	if err != nil {
+		t.Fatalf("AssembleSystemPrompt: %v", err)
+	}
+	want := "base override\n\ntoolchain hints"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if strings.Contains(got, "zero error findings and zero warning findings") {
+		t.Fatalf("base fragment should not duplicate the built-in default verdict rules:\n%s", got)
+	}
+}
+
+func TestAssembleSystemPromptBaseFragmentOverridesDefaultAllModes(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFragment(t, dir, "00-base.md", "custom base prompt")
+
+	got, err := AssembleSystemPrompt([]string{dir}, v1alpha1.AgentModeWriteBranch, OutputBranchCommit)
+	if err != nil {
+		t.Fatalf("AssembleSystemPrompt: %v", err)
+	}
+	if got != "custom base prompt" {
+		t.Fatalf("got %q, want %q", got, "custom base prompt")
+	}
+}
+
+func TestAssembleSystemPromptEmptyFragmentsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeAgentFragment(t, dir, "15-toolchain-crd.md", "   \n\t  ")
+	writeAgentFragment(t, dir, "20-deployment.md", "deployment hints")
+
+	got, err := AssembleSystemPrompt([]string{dir}, v1alpha1.AgentModeReadOnly, OutputPRReview)
+	if err != nil {
+		t.Fatalf("AssembleSystemPrompt: %v", err)
+	}
+	want := DefaultReviewerSystemPrompt + "\n\ndeployment hints"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
