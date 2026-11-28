@@ -14,8 +14,63 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      lint: ${{ steps.filter.outputs.lint }}
+      action_smoke: ${{ steps.filter.outputs.action_smoke }}
+      usage_sink: ${{ steps.filter.outputs.usage_sink }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          go=false
+          lint=false
+          action_smoke=false
+          usage_sink=false
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            go=true
+            lint=true
+            action_smoke=true
+            usage_sink=true
+          else
+            changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+            if printf '%s\n' "$changed" | grep -Eq '^(api|cmd|pkg)/|^go\.(mod|sum)$|^justfile$|^\.github/workflows/ci\.yml$'; then
+              go=true
+            fi
+            if printf '%s\n' "$changed" | grep -Eq '^(\.github|action|config|charts|examples)/'; then
+              lint=true
+            fi
+            if printf '%s\n' "$changed" | grep -Eq '^action/|^cmd/agentrunnerd/|^pkg/(review|pirpc)/|^api/|^go\.(mod|sum)$|^\.github/workflows/ci\.yml$'; then
+              action_smoke=true
+            fi
+            if printf '%s\n' "$changed" | grep -Eq '^addons/usage-sink/|^justfile$|^\.github/workflows/ci\.yml$'; then
+              usage_sink=true
+            fi
+          fi
+
+          {
+            echo "go=${go}"
+            echo "lint=${lint}"
+            echo "action_smoke=${action_smoke}"
+            echo "usage_sink=${usage_sink}"
+          } >> "$GITHUB_OUTPUT"
+
   go:
     name: Go checks
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,6 +90,8 @@ jobs:
 
   lint:
     name: Lint workflows & YAML
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -80,6 +137,8 @@ jobs:
 
   action-smoke:
     name: Action smoke test
+    needs: changes
+    if: needs.changes.outputs.action_smoke == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -150,3 +209,21 @@ jobs:
           if [ -f /tmp/agentrunnerd.pid ]; then
             kill "$(cat /tmp/agentrunnerd.pid)" 2>/dev/null || true
           fi
+
+  usage-sink:
+    name: Usage Sink checks
+    needs: changes
+    if: needs.changes.outputs.usage_sink == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: addons/usage-sink/go.mod
+          cache-dependency-path: addons/usage-sink/go.sum
+
+      - uses: extractions/setup-just@v4
+
+      - name: Run usage-sink validation suite
+        run: just check-usage-sink
