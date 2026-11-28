@@ -63,15 +63,17 @@ End your final response with a single JSON object matching:
   "comments": []
 }`
 
-// AssembleAgentsMD collects *.md files across the given directories, sorted
-// lexicographically by basename so numbered fragments (00-base.md,
-// 10-toolchain-image.md, 15-toolchain-crd.md, 20-deployment.md) merge in order.
-func AssembleAgentsMD(dirs ...string) (string, error) {
-	type fragment struct {
-		name    string
-		content string
-	}
-	var collected []fragment
+type agentsFragment struct {
+	name    string
+	content string
+}
+
+// collectAgentFragments reads every non-empty *.md file across the given
+// directories and returns the fragments sorted lexicographically by basename so
+// numbered fragments (00-base.md, 10-toolchain-image.md, 15-toolchain-crd.md,
+// 20-deployment.md) merge in order.
+func collectAgentFragments(dirs ...string) ([]agentsFragment, error) {
+	var collected []agentsFragment
 	for _, dir := range dirs {
 		if strings.TrimSpace(dir) == "" {
 			continue
@@ -81,7 +83,7 @@ func AssembleAgentsMD(dirs ...string) (string, error) {
 			continue
 		}
 		if err != nil {
-			return "", fmt.Errorf("reading agents dir %s: %w", dir, err)
+			return nil, fmt.Errorf("reading agents dir %s: %w", dir, err)
 		}
 		for _, entry := range entries {
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
@@ -89,10 +91,10 @@ func AssembleAgentsMD(dirs ...string) (string, error) {
 			}
 			raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 			if err != nil {
-				return "", fmt.Errorf("reading %s: %w", entry.Name(), err)
+				return nil, fmt.Errorf("reading %s: %w", entry.Name(), err)
 			}
 			if trimmed := strings.TrimSpace(string(raw)); trimmed != "" {
-				collected = append(collected, fragment{name: entry.Name(), content: trimmed})
+				collected = append(collected, agentsFragment{name: entry.Name(), content: trimmed})
 			}
 		}
 	}
@@ -100,12 +102,61 @@ func AssembleAgentsMD(dirs ...string) (string, error) {
 	sort.SliceStable(collected, func(i, j int) bool {
 		return collected[i].name < collected[j].name
 	})
+	return collected, nil
+}
 
+func joinAgentFragments(fragments []agentsFragment) string {
 	var parts []string
-	for _, f := range collected {
+	for _, f := range fragments {
 		parts = append(parts, f.content)
 	}
-	return strings.Join(parts, "\n\n"), nil
+	return strings.Join(parts, "\n\n")
+}
+
+// isBaseFragment reports whether name is a base prompt fragment (00-*.md).
+// Base fragments are treated as an explicit override of the built-in system
+// prompt; non-base fragments (10-*.md, 15-*.md, 20-*.md, ...) are layered on top
+// of it.
+func isBaseFragment(name string) bool {
+	return strings.HasPrefix(name, "00-") && strings.HasSuffix(name, ".md")
+}
+
+// AssembleAgentsMD collects *.md files across the given directories, sorted
+// lexicographically by basename so numbered fragments (00-base.md,
+// 10-toolchain-image.md, 15-toolchain-crd.md, 20-deployment.md) merge in order.
+func AssembleAgentsMD(dirs ...string) (string, error) {
+	fragments, err := collectAgentFragments(dirs...)
+	if err != nil {
+		return "", err
+	}
+	return joinAgentFragments(fragments), nil
+}
+
+// AssembleSystemPrompt assembles the effective system prompt from the numbered
+// *.md fragments across the given directories.
+//
+// When no 00-*.md base fragment is present, the built-in default system prompt
+// for the given mode/output is prepended ahead of the gathered fragments
+// (separated by a blank line) so toolchain/deployment/org-policy guidance
+// layers on top of the built-in JSON schema and verdict rules. When a 00-*.md
+// fragment is present, it fully overrides the built-in default (preserving
+// backwards-compatible override behavior) and no default is prepended.
+func AssembleSystemPrompt(dirs []string, mode, output string) (string, error) {
+	fragments, err := collectAgentFragments(dirs...)
+	if err != nil {
+		return "", err
+	}
+	for _, f := range fragments {
+		if isBaseFragment(f.name) {
+			return joinAgentFragments(fragments), nil
+		}
+	}
+	defaultPrompt := selectDefaultSystemPrompt(mode, output)
+	joined := joinAgentFragments(fragments)
+	if joined == "" {
+		return defaultPrompt, nil
+	}
+	return defaultPrompt + "\n\n" + joined, nil
 }
 
 // BuildUserPrompt constructs the initial review prompt using git diff --stat

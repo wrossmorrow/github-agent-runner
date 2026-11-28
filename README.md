@@ -101,6 +101,17 @@ kubectl -n actions-runners get ard
 
 ---
 
+## System Prompt Fragments
+
+`agentrunnerd` assembles the system prompt from numbered `*.md` fragments found across the configured `agentsDirs` (e.g. `/opt/agents`, `/etc/agentrunner/prompts`, `/etc/agentrunner`), sorted lexicographically by basename:
+
+- **`00-*.md`** (e.g. `00-base.md`) — a **base prompt fragment**. If any `00-*.md` file is present across the directories, it fully **overrides** the built-in default system prompt (JSON schema, verdict rules, suggestion-block discipline, write-branch guardrails), preserving backwards-compatible override behavior.
+- **`10-*.md` and higher** (e.g. `10-org-policy.md`, `15-toolchain-crd.md`, `20-deployment.md`) — **augmentations**. When no `00-*.md` fragment is present, the built-in default system prompt is prepended ahead of these fragments (separated by a blank line) so org policy and toolchain hints layer on top of the built-in rules instead of silently shadowing them.
+
+With no `00-*.md` fragment present and no fragments at all, the built-in default system prompt is used unchanged.
+
+---
+
 ## Use in a GitHub Actions Workflow
 
 Add a workflow to your target repository referencing the scale-set name (`spec.runner.runnerScaleSetName`) and [`action/`](action/action.yml) (pin a release tag or, for production, a full commit SHA):
