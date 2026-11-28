@@ -90,21 +90,49 @@ type LocalRef struct {
 
 // AgentSpec configures the pi harness, mode, model gateway, execution limits, and prompts.
 type AgentSpec struct {
-	Harness               string           `json:"harness,omitempty"`
-	Mode                  string           `json:"mode,omitempty"`
-	Model                 string           `json:"model"`
-	Provider              string           `json:"provider,omitempty"`
-	Gateway               GatewaySpec      `json:"gateway"`
-	Limits                LimitsSpec       `json:"limits,omitempty"`
-	EgressAllowlist       []string         `json:"egressAllowlist,omitempty"`
-	ProtectedBranches     *[]string        `json:"protectedBranches,omitempty"`
-	SessionSink           *SessionSinkSpec `json:"sessionSink,omitempty"`
-	SystemPromptRef       *ConfigMapKeyRef `json:"systemPromptRef,omitempty"`
-	AgentsMD              string           `json:"agentsMd,omitempty"`
-	GitHubAppSecretRef    *SecretRef       `json:"githubAppSecretRef,omitempty"`
-	GitHubAppConfigMapRef *ConfigMapKeyRef `json:"githubAppConfigMapRef,omitempty"`
-	GitHubAppID           string           `json:"githubAppId,omitempty"`
-	GitHubInstallID       string           `json:"githubAppInstallationId,omitempty"`
+	Harness               string                `json:"harness,omitempty"`
+	Mode                  string                `json:"mode,omitempty"`
+	Model                 string                `json:"model"`
+	Provider              string                `json:"provider,omitempty"`
+	Gateway               GatewaySpec           `json:"gateway"`
+	Limits                LimitsSpec            `json:"limits,omitempty"`
+	EgressAllowlist       []string              `json:"egressAllowlist,omitempty"`
+	ProtectedBranches     *[]string             `json:"protectedBranches,omitempty"`
+	SessionSink           *SessionSinkSpec      `json:"sessionSink,omitempty"`
+	MCPServerRefs         []LocalRef            `json:"mcpServerRefs,omitempty"`
+	MCPServers            []InlineMCPServerSpec `json:"mcpServers,omitempty"`
+	SystemPromptRef       *ConfigMapKeyRef      `json:"systemPromptRef,omitempty"`
+	AgentsMD              string                `json:"agentsMd,omitempty"`
+	GitHubAppSecretRef    *SecretRef            `json:"githubAppSecretRef,omitempty"`
+	GitHubAppConfigMapRef *ConfigMapKeyRef      `json:"githubAppConfigMapRef,omitempty"`
+	GitHubAppID           string                `json:"githubAppId,omitempty"`
+	GitHubInstallID       string                `json:"githubAppInstallationId,omitempty"`
+}
+
+// AgenticRunnerMCPServer is a namespace-scoped resource defining a reusable MCP server
+// configuration (remote HTTP URL or pre-baked stdio command) referenced by deployments.
+type AgenticRunnerMCPServer struct {
+	TypeMeta `json:",inline"`
+	Metadata ObjectMeta                 `json:"metadata"`
+	Spec     AgenticRunnerMCPServerSpec `json:"spec"`
+}
+
+// AgenticRunnerMCPServerSpec configures either a remote HTTP MCP server (preferred)
+// or a stdio subprocess command pre-baked into the toolchain image.
+type AgenticRunnerMCPServerSpec struct {
+	URL             string            `json:"url,omitempty"`
+	Command         string            `json:"command,omitempty"`
+	Args            []string          `json:"args,omitempty"`
+	Headers         map[string]string `json:"headers,omitempty"`
+	AuthSecretRef   *SecretRef        `json:"authSecretRef,omitempty"`
+	EgressAllowlist []string          `json:"egressAllowlist,omitempty"`
+	AgentsMD        string            `json:"agentsMd,omitempty"`
+}
+
+// InlineMCPServerSpec embeds a named MCP server configuration directly inside AgentSpec.
+type InlineMCPServerSpec struct {
+	Name                       string `json:"name"`
+	AgenticRunnerMCPServerSpec `json:",inline"`
 }
 
 // GatewaySpec points pi at an external Model Gateway / Agent Router.
@@ -165,9 +193,51 @@ func validateEgressAllowlist(field string, hosts []string) []error {
 }
 
 var dns1123SubdomainRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+var mcpServerNameRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9_]*[a-z0-9])?$`)
 
 func isDNS1123Subdomain(name string) bool {
 	return len(name) > 0 && len(name) <= 253 && dns1123SubdomainRegex.MatchString(name)
+}
+
+func isValidMCPServerName(name string) bool {
+	return len(name) > 0 && len(name) <= 63 && mcpServerNameRegex.MatchString(name)
+}
+
+// Validate checks required fields and invariants on AgenticRunnerMCPServer.
+func (m *AgenticRunnerMCPServer) Validate() error {
+	var errs []error
+	if !isValidMCPServerName(m.Metadata.Name) {
+		errs = append(errs, fmt.Errorf("invalid metadata.name %q: must match [a-z0-9]([-a-z0-9_]*[a-z0-9])?", m.Metadata.Name))
+	}
+	errs = append(errs, validateMCPServerSpec("spec", m.Spec)...)
+	return errors.Join(errs...)
+}
+
+func validateMCPServerSpec(field string, spec AgenticRunnerMCPServerSpec) []error {
+	var errs []error
+	hasURL := strings.TrimSpace(spec.URL) != ""
+	hasCmd := strings.TrimSpace(spec.Command) != ""
+	if hasURL == hasCmd {
+		errs = append(errs, fmt.Errorf("%s must set exactly one of url or command", field))
+	}
+	if hasURL {
+		if err := validateURL(spec.URL, field+".url"); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if hasCmd && strings.ContainsAny(strings.TrimSpace(spec.Command), " \t\n\r") {
+		errs = append(errs, fmt.Errorf("%s.command must be a binary name or path without whitespace (use args)", field))
+	}
+	if spec.AuthSecretRef != nil {
+		if strings.TrimSpace(spec.AuthSecretRef.Name) == "" {
+			errs = append(errs, fmt.Errorf("%s.authSecretRef.name is required", field))
+		}
+		if !hasURL {
+			errs = append(errs, fmt.Errorf("%s.authSecretRef is only valid when url is set", field))
+		}
+	}
+	errs = append(errs, validateEgressAllowlist(field+".egressAllowlist", spec.EgressAllowlist)...)
+	return errs
 }
 
 // Validate checks required fields and invariants on AgenticRunnerDeployment.
@@ -223,6 +293,22 @@ func (d *AgenticRunnerDeployment) Validate() error {
 		if err := validateURL(d.Spec.Agent.SessionSink.Endpoint, "spec.agent.sessionSink.endpoint"); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	for i, ref := range d.Spec.Agent.MCPServerRefs {
+		if !isValidMCPServerName(ref.Name) {
+			errs = append(errs, fmt.Errorf("invalid spec.agent.mcpServerRefs[%d].name %q", i, ref.Name))
+		}
+	}
+	seenInlineMCP := map[string]struct{}{}
+	for i, srv := range d.Spec.Agent.MCPServers {
+		if !isValidMCPServerName(srv.Name) {
+			errs = append(errs, fmt.Errorf("invalid spec.agent.mcpServers[%d].name %q", i, srv.Name))
+		} else if _, dup := seenInlineMCP[srv.Name]; dup {
+			errs = append(errs, fmt.Errorf("duplicate spec.agent.mcpServers name %q", srv.Name))
+		} else {
+			seenInlineMCP[srv.Name] = struct{}{}
+		}
+		errs = append(errs, validateMCPServerSpec(fmt.Sprintf("spec.agent.mcpServers[%d]", i), srv.AgenticRunnerMCPServerSpec)...)
 	}
 	if d.Spec.Agent.Limits.MaxTurns < 0 {
 		errs = append(errs, errors.New("spec.agent.limits.maxTurns must be >= 0"))

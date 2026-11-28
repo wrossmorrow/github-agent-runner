@@ -15,7 +15,7 @@ metadata:
   name: agentrunner-controller
 rules:
   - apiGroups: ["agentic.example.io"]
-    resources: ["agenticrunnertoolchains", "agenticrunnerdeployments"]
+    resources: ["agenticrunnertoolchains", "agenticrunnerdeployments", "agenticrunnermcpservers"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["agentic.example.io"]
     resources: ["agenticrunnerdeployments/status"]

@@ -134,6 +134,7 @@ jobs:
           helm template agentrunner-controller charts/agentrunner-controller > /dev/null
           diff -u config/crd/agenticrunnerdeployments.yaml charts/agentrunner-controller/crds/agenticrunnerdeployments.yaml
           diff -u config/crd/agenticrunnertoolchains.yaml charts/agentrunner-controller/crds/agenticrunnertoolchains.yaml
+          diff -u config/crd/agenticrunnermcpservers.yaml charts/agentrunner-controller/crds/agenticrunnermcpservers.yaml
 
   action-smoke:
     name: Action smoke test

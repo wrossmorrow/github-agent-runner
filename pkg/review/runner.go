@@ -48,7 +48,18 @@ type Config struct {
 	Limits              v1alpha1.LimitsSpec `json:"limits,omitempty"`
 	AgentsDirs          []string            `json:"agentsDirs,omitempty"`
 	ProtectedBranches   *[]string           `json:"protectedBranches,omitempty"`
+	MCPServers          []MCPServerConfig   `json:"mcpServers,omitempty"`
 	Attribution         map[string]string   `json:"attributionHeaders,omitempty"`
+}
+
+// MCPServerConfig configures an MCP server rendered into $PI_CODING_AGENT_DIR/mcp.json.
+type MCPServerConfig struct {
+	Name         string            `json:"name"`
+	URL          string            `json:"url,omitempty"`
+	Command      string            `json:"command,omitempty"`
+	Args         []string          `json:"args,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	AuthTokenEnv string            `json:"authTokenEnv,omitempty"`
 }
 
 // Runner executes a single headless review against `pi --mode rpc`.
@@ -589,7 +600,9 @@ func readDiffStat(ctx context.Context, workspace, baseRef, headSHA string) strin
 func buildChildEnv(cfg Config, req Request, piDir string) []string {
 	var env []string
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "SESSION_SINK_TOKEN=") || strings.HasPrefix(entry, "AGENT_GATEWAY_TOKEN=") {
+		if strings.HasPrefix(entry, "SESSION_SINK_TOKEN=") ||
+			strings.HasPrefix(entry, "AGENT_GATEWAY_TOKEN=") ||
+			strings.HasPrefix(entry, "AGENTRUNNER_MCP_TOKEN_") {
 			continue
 		}
 		env = append(env, entry)

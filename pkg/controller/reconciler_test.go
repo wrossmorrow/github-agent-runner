@@ -260,3 +260,79 @@ func TestReconcileScaleSetConflict(t *testing.T) {
 		t.Fatalf("expected dep2-agent-config not to be created on conflict, got err=%v", err)
 	}
 }
+
+func newUnstructuredMCPServer(ns, name, endpoint string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": v1alpha1.Group + "/" + v1alpha1.Version,
+			"kind":       "AgenticRunnerMCPServer",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": ns,
+			},
+			"spec": map[string]any{
+				"url": endpoint,
+				"authSecretRef": map[string]any{
+					"name": name + "-secret",
+				},
+			},
+		},
+	}
+}
+
+func TestReconcileMCPServerRefsAndFanOut(t *testing.T) {
+	dep := newUnstructuredDeployment("actions-runners", "go-reviewer", "go-1.26")
+	_ = unstructured.SetNestedSlice(dep.Object, []any{map[string]any{"name": "internal-docs"}}, "spec", "agent", "mcpServerRefs")
+	depOtherNS := newUnstructuredDeployment("other-ns", "go-reviewer", "go-1.26")
+	_ = unstructured.SetNestedSlice(depOtherNS.Object, []any{map[string]any{"name": "internal-docs"}}, "spec", "agent", "mcpServerRefs")
+
+	tc := newUnstructuredToolchain("go-1.26", "agentrunner-golang:latest")
+	mcp := newUnstructuredMCPServer("actions-runners", "internal-docs", "https://mcp.internal.example/mcp")
+
+	statusTarget := &unstructured.Unstructured{}
+	statusTarget.SetGroupVersionKind(DeploymentGVK)
+
+	t.Run("missing MCP server sets MCPServerNotFound condition", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithObjects(dep.DeepCopy(), tc.DeepCopy()).WithStatusSubresource(statusTarget).Build()
+		r := &DeploymentReconciler{Client: cl}
+		if _, err := r.Reconcile(context.Background(), ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: "actions-runners", Name: "go-reviewer"},
+		}); err != nil {
+			t.Fatalf("expected nil error on missing MCP server, got %v", err)
+		}
+		got := &unstructured.Unstructured{}
+		got.SetGroupVersionKind(DeploymentGVK)
+		if err := cl.Get(context.Background(), types.NamespacedName{Namespace: "actions-runners", Name: "go-reviewer"}, got); err != nil {
+			t.Fatal(err)
+		}
+		conds, _, _ := unstructured.NestedSlice(got.Object, "status", "conditions")
+		if len(conds) != 1 || conds[0].(map[string]any)["reason"] != "MCPServerNotFound" {
+			t.Fatalf("expected MCPServerNotFound condition, got %#v", got.Object["status"])
+		}
+	})
+
+	t.Run("resolves MCP server and maps namespace-scoped fan-out", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithObjects(dep.DeepCopy(), depOtherNS.DeepCopy(), tc.DeepCopy(), mcp.DeepCopy()).WithStatusSubresource(statusTarget).Build()
+		r := &DeploymentReconciler{Client: cl}
+		if _, err := r.Reconcile(context.Background(), ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: "actions-runners", Name: "go-reviewer"},
+		}); err != nil {
+			t.Fatalf("Reconcile failed: %v", err)
+		}
+
+		cm := &unstructured.Unstructured{}
+		cm.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"})
+		if err := cl.Get(context.Background(), types.NamespacedName{Namespace: "actions-runners", Name: "go-reviewer-agent-config"}, cm); err != nil {
+			t.Fatal(err)
+		}
+		cfgJSON, _, _ := unstructured.NestedString(cm.Object, "data", "config.json")
+		if !strings.Contains(cfgJSON, `"internal-docs"`) || !strings.Contains(cfgJSON, "AGENTRUNNER_MCP_TOKEN_INTERNAL_DOCS") {
+			t.Fatalf("expected resolved MCPServer in config.json, got:\n%s", cfgJSON)
+		}
+
+		reqs := r.deploymentsForMCPServer(context.Background(), client.Object(mcp))
+		if len(reqs) != 1 || reqs[0].Namespace != "actions-runners" || reqs[0].Name != "go-reviewer" {
+			t.Fatalf("expected 1 fan-out request in actions-runners, got %+v", reqs)
+		}
+	})
+}

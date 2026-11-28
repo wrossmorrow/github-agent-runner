@@ -769,10 +769,13 @@ func TestRunnerWriteOutputRejectsDirtyWorkspace(t *testing.T) {
 func TestBuildChildEnvStripsSidecarSecrets(t *testing.T) {
 	t.Setenv("SESSION_SINK_TOKEN", "sink-top-secret")
 	t.Setenv("AGENT_GATEWAY_TOKEN", "gateway-top-secret")
+	t.Setenv("AGENTRUNNER_MCP_TOKEN_INTERNAL_DOCS", "mcp-top-secret")
 
 	env := buildChildEnv(Config{Model: "gpt-test", Provider: "gateway"}, Request{Repo: "org/repo", RunID: "123"}, "/tmp/pi-dir")
 	for _, entry := range env {
-		if strings.HasPrefix(entry, "SESSION_SINK_TOKEN=") || strings.HasPrefix(entry, "AGENT_GATEWAY_TOKEN=") {
+		if strings.HasPrefix(entry, "SESSION_SINK_TOKEN=") ||
+			strings.HasPrefix(entry, "AGENT_GATEWAY_TOKEN=") ||
+			strings.HasPrefix(entry, "AGENTRUNNER_MCP_TOKEN_") {
 			t.Fatalf("child env leaked sidecar secret %q", entry)
 		}
 	}
@@ -788,5 +791,54 @@ func TestBuildChildEnvStripsSidecarSecrets(t *testing.T) {
 	}
 	if !foundDir || !foundRepo {
 		t.Fatalf("expected PI_CODING_AGENT_DIR and AGENT_GITHUB_REPO in child env, got %v", env)
+	}
+}
+
+func TestWritePiConfigDirWritesMCPJSON(t *testing.T) {
+	t.Setenv("AGENTRUNNER_MCP_TOKEN_INTERNAL_DOCS", "mcp-secret-tok")
+
+	dir, err := writePiConfigDir(Config{
+		MCPServers: []MCPServerConfig{
+			{
+				Name:         "internal-docs",
+				URL:          "http://docs-mcp.platform.svc.cluster.local:8080/mcp",
+				Headers:      map[string]string{"X-Org": "example"},
+				AuthTokenEnv: "AGENTRUNNER_MCP_TOKEN_INTERNAL_DOCS",
+			},
+			{
+				Name:    "local-tool",
+				Command: "/usr/local/bin/local-tool",
+				Args:    []string{"--stdio"},
+			},
+		},
+	}, Request{}, "", "", "", "", "")
+	if err != nil {
+		t.Fatalf("writePiConfigDir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	raw, err := os.ReadFile(filepath.Join(dir, "mcp.json"))
+	if err != nil {
+		t.Fatalf("reading mcp.json: %v", err)
+	}
+	var parsed struct {
+		MCPServers map[string]struct {
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+			Command string            `json:"command"`
+			Args    []string          `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshaling mcp.json: %v", err)
+	}
+	docs, ok := parsed.MCPServers["internal-docs"]
+	if !ok || docs.URL != "http://docs-mcp.platform.svc.cluster.local:8080/mcp" ||
+		docs.Headers["Authorization"] != "Bearer mcp-secret-tok" || docs.Headers["X-Org"] != "example" {
+		t.Fatalf("unexpected remote HTTP mcp.json entry: %+v", docs)
+	}
+	local, ok := parsed.MCPServers["local-tool"]
+	if !ok || local.Command != "/usr/local/bin/local-tool" || len(local.Args) != 1 || local.Args[0] != "--stdio" {
+		t.Fatalf("unexpected stdio mcp.json entry: %+v", local)
 	}
 }

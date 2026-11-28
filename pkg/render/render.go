@@ -40,6 +40,7 @@ type Options struct {
 	AgentRunnerPort             int
 	ProxyPort                   int
 	ClusterEgressAllowlist      []string
+	MCPServers                  []*v1alpha1.AgenticRunnerMCPServer
 }
 
 func (o Options) withDefaults() Options {
@@ -126,7 +127,86 @@ type AgentRuntimeConfig struct {
 	SessionSinkEndpoint string              `json:"sessionSinkEndpoint,omitempty"`
 	Limits              v1alpha1.LimitsSpec `json:"limits,omitempty"`
 	ProtectedBranches   *[]string           `json:"protectedBranches,omitempty"`
+	MCPServers          []RuntimeMCPServer  `json:"mcpServers,omitempty"`
 	Attribution         map[string]string   `json:"attributionHeaders,omitempty"`
+}
+
+// RuntimeMCPServer describes a resolved MCP server written into config.json for agentrunnerd.
+type RuntimeMCPServer struct {
+	Name         string            `json:"name"`
+	URL          string            `json:"url,omitempty"`
+	Command      string            `json:"command,omitempty"`
+	Args         []string          `json:"args,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	AuthTokenEnv string            `json:"authTokenEnv,omitempty"`
+}
+
+type resolvedMCPServer struct {
+	runtime         RuntimeMCPServer
+	authSecretRef   *v1alpha1.SecretRef
+	egressAllowlist []string
+	agentsMD        string
+}
+
+func mcpTokenEnvName(name string) string {
+	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"))
+	return "AGENTRUNNER_MCP_TOKEN_" + normalized
+}
+
+func resolveMCPServers(dep *v1alpha1.AgenticRunnerDeployment, available []*v1alpha1.AgenticRunnerMCPServer) ([]resolvedMCPServer, error) {
+	byName := make(map[string]*v1alpha1.AgenticRunnerMCPServer, len(available))
+	for _, m := range available {
+		if m == nil {
+			continue
+		}
+		if err := m.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid AgenticRunnerMCPServer %q: %w", m.Metadata.Name, err)
+		}
+		byName[m.Metadata.Name] = m
+	}
+
+	toResolved := func(name string, spec v1alpha1.AgenticRunnerMCPServerSpec) resolvedMCPServer {
+		var authEnv string
+		if spec.AuthSecretRef != nil {
+			authEnv = mcpTokenEnvName(name)
+		}
+		return resolvedMCPServer{
+			runtime: RuntimeMCPServer{
+				Name:         name,
+				URL:          strings.TrimSpace(spec.URL),
+				Command:      strings.TrimSpace(spec.Command),
+				Args:         spec.Args,
+				Headers:      spec.Headers,
+				AuthTokenEnv: authEnv,
+			},
+			authSecretRef:   spec.AuthSecretRef,
+			egressAllowlist: spec.EgressAllowlist,
+			agentsMD:        spec.AgentsMD,
+		}
+	}
+
+	var out []resolvedMCPServer
+	idxByName := map[string]int{}
+	upsert := func(item resolvedMCPServer) {
+		if idx, exists := idxByName[item.runtime.Name]; exists {
+			out[idx] = item
+			return
+		}
+		idxByName[item.runtime.Name] = len(out)
+		out = append(out, item)
+	}
+
+	for _, ref := range dep.Spec.Agent.MCPServerRefs {
+		m, ok := byName[ref.Name]
+		if !ok {
+			return nil, fmt.Errorf("referenced AgenticRunnerMCPServer %q not provided", ref.Name)
+		}
+		upsert(toResolved(ref.Name, m.Spec))
+	}
+	for _, inline := range dep.Spec.Agent.MCPServers {
+		upsert(toResolved(inline.Name, inline.AgenticRunnerMCPServerSpec))
+	}
+	return out, nil
 }
 
 func effectiveMode(dep *v1alpha1.AgenticRunnerDeployment) string {
@@ -151,6 +231,11 @@ func Render(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToo
 		return nil, fmt.Errorf("deployment references toolchain %q, got %q", dep.Spec.ToolchainRef.Name, tc.Metadata.Name)
 	}
 
+	mcps, err := resolveMCPServers(dep, opts.MCPServers)
+	if err != nil {
+		return nil, err
+	}
+
 	opts = opts.withDefaults()
 	ns := dep.Metadata.Namespace
 	if ns == "" {
@@ -160,13 +245,13 @@ func Render(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToo
 	agentCMName := dep.Metadata.Name + "-agent-config"
 	egressCMName := dep.Metadata.Name + "-egress-config"
 
-	agentCM, err := buildAgentConfigMap(dep, tc, ns, agentCMName)
+	agentCM, err := buildAgentConfigMap(dep, tc, mcps, ns, agentCMName)
 	if err != nil {
 		return nil, err
 	}
-	egressCM, endpointPorts := buildEgressConfigMap(dep, tc, ns, egressCMName, opts)
+	egressCM, endpointPorts := buildEgressConfigMap(dep, tc, mcps, ns, egressCMName, opts)
 	arcRole, arcRoleBinding := buildARCRBAC(dep, ns, opts)
-	runnerSet := buildAutoscalingRunnerSet(dep, tc, ns, agentCMName, egressCMName, opts)
+	runnerSet := buildAutoscalingRunnerSet(dep, tc, mcps, ns, agentCMName, egressCMName, opts)
 	netPol := buildNetworkPolicy(dep, ns, endpointPorts)
 
 	return &Bundle{
@@ -179,7 +264,7 @@ func Render(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToo
 	}, nil
 }
 
-func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToolchain, ns, name string) (K8sObject, error) {
+func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToolchain, mcps []resolvedMCPServer, ns, name string) (K8sObject, error) {
 	harness := dep.Spec.Agent.Harness
 	if harness == "" {
 		harness = "pi"
@@ -187,6 +272,10 @@ func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Age
 	var sessionSinkEndpoint string
 	if dep.Spec.Agent.SessionSink != nil {
 		sessionSinkEndpoint = dep.Spec.Agent.SessionSink.Endpoint
+	}
+	var runtimeMCPs []RuntimeMCPServer
+	for _, m := range mcps {
+		runtimeMCPs = append(runtimeMCPs, m.runtime)
 	}
 	cfg := AgentRuntimeConfig{
 		Harness:             harness,
@@ -197,6 +286,7 @@ func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Age
 		SessionSinkEndpoint: sessionSinkEndpoint,
 		Limits:              dep.Spec.Agent.Limits,
 		ProtectedBranches:   dep.Spec.Agent.ProtectedBranches,
+		MCPServers:          runtimeMCPs,
 		Attribution: map[string]string{
 			"sessionId":   "x-session-id",
 			"sessionKind": "x-session-kind",
@@ -217,6 +307,11 @@ func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Age
 	if strings.TrimSpace(tc.Spec.AgentsMD) != "" {
 		data["15-toolchain-crd.md"] = strings.TrimSpace(tc.Spec.AgentsMD) + "\n"
 	}
+	for _, m := range mcps {
+		if strings.TrimSpace(m.agentsMD) != "" {
+			data["18-mcp-"+m.runtime.Name+".md"] = strings.TrimSpace(m.agentsMD) + "\n"
+		}
+	}
 	if strings.TrimSpace(dep.Spec.Agent.AgentsMD) != "" {
 		data["20-deployment.md"] = strings.TrimSpace(dep.Spec.Agent.AgentsMD) + "\n"
 	}
@@ -233,7 +328,7 @@ func buildAgentConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Age
 	}, nil
 }
 
-func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToolchain, ns, name string, opts Options) (K8sObject, []int) {
+func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.AgenticRunnerToolchain, mcps []resolvedMCPServer, ns, name string, opts Options) (K8sObject, []int) {
 	seen := map[string]struct{}{}
 	var domains []string
 	addHost := func(h string) {
@@ -256,6 +351,11 @@ func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Ag
 	}
 	for _, h := range dep.Spec.Agent.EgressAllowlist {
 		addHost(h)
+	}
+	for _, m := range mcps {
+		for _, h := range m.egressAllowlist {
+			addHost(h)
+		}
 	}
 
 	var ports []int
@@ -283,6 +383,11 @@ func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Ag
 	addEndpoint(dep.Spec.Agent.Gateway.Endpoint)
 	if dep.Spec.Agent.SessionSink != nil {
 		addEndpoint(dep.Spec.Agent.SessionSink.Endpoint)
+	}
+	for _, m := range mcps {
+		if m.runtime.URL != "" {
+			addEndpoint(m.runtime.URL)
+		}
 	}
 
 	sort.Strings(domains)
@@ -318,6 +423,7 @@ func buildEgressConfigMap(dep *v1alpha1.AgenticRunnerDeployment, tc *v1alpha1.Ag
 func buildAutoscalingRunnerSet(
 	dep *v1alpha1.AgenticRunnerDeployment,
 	tc *v1alpha1.AgenticRunnerToolchain,
+	mcps []resolvedMCPServer,
 	ns, agentCMName, egressCMName string,
 	opts Options,
 ) K8sObject {
@@ -352,6 +458,11 @@ func buildAutoscalingRunnerSet(
 	addNoProxy(dep.Spec.Agent.Gateway.Endpoint)
 	if dep.Spec.Agent.SessionSink != nil {
 		addNoProxy(dep.Spec.Agent.SessionSink.Endpoint)
+	}
+	for _, m := range mcps {
+		if m.runtime.URL != "" {
+			addNoProxy(m.runtime.URL)
+		}
 	}
 	noProxy := strings.Join(noProxyHosts, ",")
 	agentEnv := []K8sObject{
@@ -396,6 +507,24 @@ func buildAutoscalingRunnerSet(
 			"valueFrom": K8sObject{
 				"secretKeyRef": K8sObject{
 					"name": dep.Spec.Agent.SessionSink.AuthSecretRef.Name,
+					"key":  key,
+				},
+			},
+		})
+	}
+	for _, m := range mcps {
+		if m.authSecretRef == nil {
+			continue
+		}
+		key := m.authSecretRef.Key
+		if key == "" {
+			key = "token"
+		}
+		agentEnv = append(agentEnv, K8sObject{
+			"name": m.runtime.AuthTokenEnv,
+			"valueFrom": K8sObject{
+				"secretKeyRef": K8sObject{
+					"name": m.authSecretRef.Name,
 					"key":  key,
 				},
 			},

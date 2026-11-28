@@ -36,6 +36,12 @@ var (
 		Version: v1alpha1.Version,
 		Kind:    "AgenticRunnerToolchain",
 	}
+	// MCPServerGVK is the GroupVersionKind for AgenticRunnerMCPServer.
+	MCPServerGVK = schema.GroupVersionKind{
+		Group:   v1alpha1.Group,
+		Version: v1alpha1.Version,
+		Kind:    "AgenticRunnerMCPServer",
+	}
 	appsDeploymentListGVK = schema.GroupVersionKind{
 		Group:   "apps",
 		Version: "v1",
@@ -92,7 +98,37 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, fmt.Errorf("decode toolchain: %w", err)
 	}
 
+	mcpNamespace := dep.Metadata.Namespace
+	if mcpNamespace == "" {
+		mcpNamespace = req.Namespace
+	}
+	var mcps []*v1alpha1.AgenticRunnerMCPServer
+	for _, mcpRef := range dep.Spec.Agent.MCPServerRefs {
+		mcpObj := &unstructured.Unstructured{}
+		mcpObj.SetGroupVersionKind(MCPServerGVK)
+		if err := r.Client.Get(ctx, types.NamespacedName{Namespace: mcpNamespace, Name: mcpRef.Name}, mcpObj); err != nil {
+			if apierrors.IsNotFound(err) {
+				msg := fmt.Sprintf("AgenticRunnerMCPServer %q not found in namespace %q", mcpRef.Name, mcpNamespace)
+				logger.Info(msg)
+				_ = r.updateStatus(ctx, depObj, tc.Spec.Image, "", dep.Spec.Runner.RunnerScaleSetName, "False", "MCPServerNotFound", msg)
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		var srv v1alpha1.AgenticRunnerMCPServer
+		if err := decodeUnstructured(mcpObj, &srv); err != nil {
+			return ctrl.Result{}, fmt.Errorf("decode mcp server %q: %w", mcpRef.Name, err)
+		}
+		if err := srv.Validate(); err != nil {
+			logger.Info("invalid AgenticRunnerMCPServer spec", "mcpServer", mcpRef.Name, "error", err)
+			_ = r.updateStatus(ctx, depObj, tc.Spec.Image, "", dep.Spec.Runner.RunnerScaleSetName, "False", "InvalidMCPServer", err.Error())
+			return ctrl.Result{}, nil
+		}
+		mcps = append(mcps, &srv)
+	}
+
 	opts := r.RenderOptions
+	opts.MCPServers = mcps
 	if opts.ARCVersion == "" && r.AutoDetectARCVersion {
 		opts.ARCVersion = r.detectARCVersion(ctx, opts.ARCControllerNamespace)
 	}
@@ -153,10 +189,14 @@ func (r *DeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	tcWatch := &unstructured.Unstructured{}
 	tcWatch.SetGroupVersionKind(ToolchainGVK)
 
+	mcpWatch := &unstructured.Unstructured{}
+	mcpWatch.SetGroupVersionKind(MCPServerGVK)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("agenticrunnerdeployment").
 		For(depWatch).
 		Watches(tcWatch, handler.EnqueueRequestsFromMapFunc(r.deploymentsForToolchain)).
+		Watches(mcpWatch, handler.EnqueueRequestsFromMapFunc(r.deploymentsForMCPServer)).
 		Complete(r)
 }
 
@@ -182,6 +222,43 @@ func (r *DeploymentReconciler) deploymentsForToolchain(ctx context.Context, obj 
 					Name:      item.GetName(),
 				},
 			})
+		}
+	}
+	return reqs
+}
+
+func (r *DeploymentReconciler) deploymentsForMCPServer(ctx context.Context, obj client.Object) []reconcile.Request {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   DeploymentGVK.Group,
+		Version: DeploymentGVK.Version,
+		Kind:    "AgenticRunnerDeploymentList",
+	})
+	if err := r.Client.List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
+		log.FromContext(ctx).Error(err, "listing AgenticRunnerDeployments for MCP server", "mcpServer", obj.GetName())
+		return nil
+	}
+
+	var reqs []reconcile.Request
+	for _, item := range list.Items {
+		refs, found, _ := unstructured.NestedSlice(item.Object, "spec", "agent", "mcpServerRefs")
+		if !found {
+			continue
+		}
+		for _, entry := range refs {
+			m, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			if name, _ := m["name"].(string); name == obj.GetName() {
+				reqs = append(reqs, reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Namespace: item.GetNamespace(),
+						Name:      item.GetName(),
+					},
+				})
+				break
+			}
 		}
 	}
 	return reqs
