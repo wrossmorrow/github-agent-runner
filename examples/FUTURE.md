@@ -144,9 +144,9 @@ A full autonomous PR lifecycle (trigger → create PR → run CI & review → fi
 ### A. CRDs & Controller (`api/v1alpha1/`, `pkg/render/`, `pkg/controller/`)
 - **Task / capability modes** *(implemented for `read-only`, `suggest`, and Stage 3A `write-branch`)*: Declare allowed agent capabilities on `AgenticRunnerDeployment` (`spec.agent.mode: read-only | suggest | write-branch`), with `agentrunnerd` enforcing mode↔output gating (`403` for write outputs outside `write-branch`).
 - **Rate limits & loop budgets**: CRD fields for `limits.maxIterationsPerPR`, `limits.cooldownSeconds`, and per-deployment concurrency/budget metadata forwarded to the gateway and `agentrunnerd`. (`limits.maxTransportRetries` is implemented for transient mid-stream errors.)
-- **Workspace & git write permissions**: For Tier 3 runners, align `/home/runner/_work` write/git-push ergonomics cleanly with `runner` UID `1001` and `agent` UID `1000` (today `agent` only needs read + `git diff` access).
+- **Workspace & git write permissions** *(group-write via `SharedFSGroup` implemented in `action/action.yml`)*: `actions/checkout` in the stock `runner` container (UID `1001`) grants group-write (`chmod -R g+w`) on write outputs (`branch-commit`, `revert-pr`) so the `agent` sidecar (UID `1000`, `fsGroup: 1001`) can edit files and `.git/` state cleanly.
 - **Workload Identity / read-only `ServiceAccount`** *(`spec.runner.serviceAccountName` implemented in CRD & renderer)*: Allows deployment pods (including ARC v2 runner/sidecar pods via `AutoscalingRunnerSet.spec.template.spec.serviceAccountName`) to hold narrowly scoped read-only Kubernetes/observability access via cloud Workload Identity without static secrets in GitHub Actions.
-- **Session archival config**: Optional S3/GCS bucket & prefix settings on `AgenticRunnerDeployment` so `agentrunnerd` persists JSONL transcripts and `metadata.json` for post-mortem debugging of multi-step runs.
+- **Session archival config** *(`spec.agent.sessionSink` implemented in CRD, renderer & `agentrunnerd`)*: Optional HTTP archival endpoint (`endpoint` + `authSecretRef`) where `agentrunnerd` posts `metadata.json` + gzipped `transcript.jsonl.gz` fail-open before ephemeral pod cleanup, preserving zero cloud IAM inside runner pods.
 - **Per-deployment egress additions** *(`spec.agent.egressAllowlist` implemented in CRD & renderer)*: Appends deployment-specific domains (e.g., internal artifact registries, staging URLs, or issue trackers) on top of `AgenticRunnerToolchain.spec.egressAllowlist`.
 
 ### B. `agentrunnerd` & GitHub Action (`cmd/agentrunnerd/`, `pkg/review/`, `action/`)
@@ -168,3 +168,56 @@ Autonomous multi-agent loops (especially autonomous-style create → review → 
 - **Hard token & USD spend ceilings**: Reject calls with `429` once a PR or daily repo budget is exhausted so a misbehaving fix loop fails fast rather than spinning overnight.
 - **Model tier routing & fallback**: Route complex author/fixer runs to frontier reasoning models, route fast policy gates to smaller/cheaper models, and fall back gracefully on upstream `429`/`5xx`.
 - **Prefix-cache sticky routing**: Hash on `x-github-run-id` / `x-session-id` (or use `InferencePool` EPP for self-hosted GPU pools) so multi-turn agent loops keep warm KV-cache hits.
+
+---
+
+## 5. MCP Server Support *(CRD, Renderer, Controller & `mcp.json` Implemented)*
+
+`AgenticRunnerMCPServer` (`config/crd/agenticrunnermcpservers.yaml`), `spec.agent.mcpServerRefs` / inline `spec.agent.mcpServers`, controller watching/resolution, renderer egress/RBAC/secret wiring, and per-run `$PI_CODING_AGENT_DIR/mcp.json` generation are now implemented:
+
+```yaml
+apiVersion: agentic.example.io/v1alpha1
+kind: AgenticRunnerMCPServer
+metadata:
+  name: internal-docs
+  namespace: actions-runners
+spec:
+  # Remote HTTP/Streamable-HTTP server (preferred for ephemeral ARC pods)
+  url: http://docs-mcp.platform.svc.cluster.local:8080/mcp
+  authSecretRef:
+    name: docs-mcp-token
+    key: token
+  # Optional tool usage guidance layered as a numbered AGENTS.md fragment (e.g. 18-mcp-<name>.md)
+  agentsMd: |
+    Use the `internal-docs` MCP server to look up service RFCs and API contracts before recommending architectural changes.
+---
+apiVersion: agentic.example.io/v1alpha1
+kind: AgenticRunnerDeployment
+metadata:
+  name: go-reviewer
+  namespace: actions-runners
+spec:
+  agent:
+    mcpServerRefs:
+      - name: internal-docs
+    # Optional per-deployment inline servers (override referenced servers by name)
+    mcpServers: []
+```
+
+### How It Wires Through the Stack
+1. **Controller (`pkg/controller/`)**: Watches `AgenticRunnerMCPServer` resources in the deployment's namespace (matching the `AgenticRunnerToolchain` watch pattern) and re-reconciles referencing deployments when an MCP server changes.
+2. **Renderer (`pkg/render/`)**:
+   - Extracts every remote `url` hostname/port into Squid `allowed_domains`, `NetworkPolicy` egress ports, and `NO_PROXY` / `http.nonProxyHosts`.
+   - Injects `authSecretRef` tokens into the `agent` sidecar environment (`AGENTRUNNER_MCP_TOKEN_<UPPER_NAME>`), never into the stock `runner` container.
+   - Emits resolved MCP metadata into `config.json` and appends each server's `agentsMd` fragment into `/etc/agentrunner/`.
+3. **Sidecar (`cmd/agentrunnerd/`, `pkg/review/`)**:
+   - Writes `$PI_CODING_AGENT_DIR/mcp.json` (`0600`) per run with resolved `url` + `Authorization: Bearer ...` headers (or `command`/`args` for offline-safe stdio binaries pre-baked into the toolchain image).
+   - Filters `AGENTRUNNER_MCP_TOKEN_*` out of `buildChildEnv` (mirroring `AGENT_GATEWAY_TOKEN` and `SESSION_SINK_TOKEN`) so repo-controlled code run by `pi` cannot read raw MCP tokens via shell env inspection. Like `models.json`, `$PI_CODING_AGENT_DIR/mcp.json` (`0600`) still contains resolved auth headers on the same UID/filesystem as `pi`, so it follows the same trust boundary.
+
+### Guardrails & Dogfood Candidates
+- **Prefer remote HTTP MCPs** over stdio `npx -y` / `uvx` servers that attempt package downloads inside egress-locked pods; only allow stdio when the binary is baked into `AgenticRunnerToolchain`.
+- **Disable repo-local MCP discovery on untrusted PRs** so a PR branch cannot introduce `.pi/mcp.json` executing arbitrary stdio commands.
+- **Strong dogfood candidates**:
+  1. **Docs / RFC knowledge MCP** (read-only internal markdown/design search during PR review & `/solve`).
+  2. **Read-only Observability / Cluster Status MCP** (for Tier 1 post-deploy verification instead of granting `kubectl` shell access).
+  3. **Usage / Session History MCP** (read-only query access over `usage-sink` / `session-hub` so triage runs can look up prior failures on a PR or commit).

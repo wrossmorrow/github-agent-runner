@@ -456,3 +456,105 @@ func TestRenderSessionSink(t *testing.T) {
 		t.Fatalf("unexpected SESSION_SINK_TOKEN secretKeyRef: %#v", secRef)
 	}
 }
+
+func TestRenderMCPServers(t *testing.T) {
+	dep, tc := sampleInputs()
+	dep.Spec.Agent.MCPServerRefs = []v1alpha1.LocalRef{{Name: "internal-docs"}, {Name: "local-mcp"}}
+	dep.Spec.Agent.MCPServers = []v1alpha1.InlineMCPServerSpec{
+		{
+			Name: "internal-docs", // override referenced server inline
+			AgenticRunnerMCPServerSpec: v1alpha1.AgenticRunnerMCPServerSpec{
+				URL:           "http://docs-mcp-v2.platform.svc.cluster.local:8095/mcp",
+				AuthSecretRef: &v1alpha1.SecretRef{Name: "docs-mcp-v2-secret"},
+				AgentsMD:      "Prefer internal-docs v2 endpoints.",
+			},
+		},
+	}
+
+	available := []*v1alpha1.AgenticRunnerMCPServer{
+		{
+			Metadata: v1alpha1.ObjectMeta{Name: "internal-docs", Namespace: "actions-runners"},
+			Spec: v1alpha1.AgenticRunnerMCPServerSpec{
+				URL: "http://docs-mcp-v1.platform.svc.cluster.local:8080/mcp",
+			},
+		},
+		{
+			Metadata: v1alpha1.ObjectMeta{Name: "local-mcp", Namespace: "actions-runners"},
+			Spec: v1alpha1.AgenticRunnerMCPServerSpec{
+				Command:         "/usr/local/bin/local-mcp",
+				Args:            []string{"--readonly"},
+				EgressAllowlist: []string{"mcp-helper.internal.example"},
+			},
+		},
+	}
+
+	bundle, err := Render(dep, tc, Options{MCPServers: available})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	agentData := bundle.AgentConfigMap["data"].(map[string]string)
+	if !strings.Contains(agentData["18-mcp-internal-docs.md"], "Prefer internal-docs v2 endpoints") {
+		t.Fatalf("expected inline override agentsMd in 18-mcp-internal-docs.md, got %q", agentData["18-mcp-internal-docs.md"])
+	}
+
+	var rtCfg AgentRuntimeConfig
+	if err := json.Unmarshal([]byte(agentData["config.json"]), &rtCfg); err != nil {
+		t.Fatalf("unmarshal config.json: %v", err)
+	}
+	if len(rtCfg.MCPServers) != 2 {
+		t.Fatalf("expected 2 resolved MCPServers, got %+v", rtCfg.MCPServers)
+	}
+	if rtCfg.MCPServers[0].Name != "internal-docs" || rtCfg.MCPServers[0].URL != "http://docs-mcp-v2.platform.svc.cluster.local:8095/mcp" ||
+		rtCfg.MCPServers[0].AuthTokenEnv != "AGENTRUNNER_MCP_TOKEN_INTERNAL_DOCS" {
+		t.Fatalf("unexpected inline-overridden MCPServer[0]: %+v", rtCfg.MCPServers[0])
+	}
+	if rtCfg.MCPServers[1].Name != "local-mcp" || rtCfg.MCPServers[1].Command != "/usr/local/bin/local-mcp" {
+		t.Fatalf("unexpected MCPServer[1]: %+v", rtCfg.MCPServers[1])
+	}
+
+	squidConf := bundle.EgressConfigMap["data"].(map[string]string)["squid.conf"]
+	for _, want := range []string{"docs-mcp-v2.platform.svc.cluster.local", "mcp-helper.internal.example"} {
+		if !strings.Contains(squidConf, "acl allowed_domains dstdomain "+want+"\n") {
+			t.Fatalf("squid.conf missing MCP domain %q:\n%s", want, squidConf)
+		}
+	}
+
+	egressRules := bundle.NetworkPolicy["spec"].(K8sObject)["egress"].([]K8sObject)
+	ports := egressRules[1]["ports"].([]K8sObject)
+	has8095 := false
+	for _, p := range ports {
+		if p["port"] == 8095 {
+			has8095 = true
+		}
+	}
+	if !has8095 {
+		t.Fatalf("NetworkPolicy missing MCP port 8095: %#v", ports)
+	}
+
+	findAgentEnv := func(name string) (K8sObject, bool) {
+		inits := bundle.AutoscalingRunnerSet["spec"].(K8sObject)["template"].(K8sObject)["spec"].(K8sObject)["initContainers"].([]K8sObject)
+		for _, ic := range inits {
+			if ic["name"] != "agent" {
+				continue
+			}
+			for _, e := range ic["env"].([]K8sObject) {
+				if e["name"] == name {
+					return e, true
+				}
+			}
+		}
+		return nil, false
+	}
+	if env, ok := findAgentEnv("NO_PROXY"); !ok || !strings.Contains(env["value"].(string), "docs-mcp-v2.platform.svc.cluster.local") {
+		t.Fatalf("NO_PROXY missing MCP host: %#v", env)
+	}
+	tokEnv, ok := findAgentEnv("AGENTRUNNER_MCP_TOKEN_INTERNAL_DOCS")
+	if !ok {
+		t.Fatal("missing AGENTRUNNER_MCP_TOKEN_INTERNAL_DOCS")
+	}
+	sec := tokEnv["valueFrom"].(K8sObject)["secretKeyRef"].(K8sObject)
+	if sec["name"] != "docs-mcp-v2-secret" || sec["key"] != "token" {
+		t.Fatalf("unexpected MCP token secretKeyRef: %#v", sec)
+	}
+}

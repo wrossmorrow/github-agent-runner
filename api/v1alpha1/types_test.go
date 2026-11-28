@@ -262,6 +262,57 @@ func TestDeploymentValidate(t *testing.T) {
 			},
 			wantErr: "sessionSink.endpoint",
 		},
+		{
+			name: "duplicate inline mcpServers name",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServers = []InlineMCPServerSpec{
+					{Name: "docs", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/1"}},
+					{Name: "docs", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/2"}},
+				}
+			},
+			wantErr: "duplicate spec.agent.mcpServers name",
+		},
+		{
+			name: "invalid mcpServerRefs name",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "Invalid_Upper"}}
+			},
+			wantErr: "mcpServerRefs",
+		},
+		{
+			name: "duplicate mcpServerRefs name",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "docs"}, {Name: "docs"}}
+			},
+			wantErr: "duplicate spec.agent.mcpServerRefs name",
+		},
+		{
+			name: "normalized collision in mcpServerRefs",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "foo-bar"}, {Name: "foo_bar"}}
+			},
+			wantErr: "token-env normalization",
+		},
+		{
+			name: "normalized collision in inline mcpServers",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServers = []InlineMCPServerSpec{
+					{Name: "foo-bar", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/1"}},
+					{Name: "foo_bar", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/2"}},
+				}
+			},
+			wantErr: "token-env normalization",
+		},
+		{
+			name: "normalized collision across mcpServerRefs and inline mcpServers",
+			mutate: func(d *AgenticRunnerDeployment) {
+				d.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "foo-bar"}}
+				d.Spec.Agent.MCPServers = []InlineMCPServerSpec{
+					{Name: "foo_bar", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/2"}},
+				}
+			},
+			wantErr: "token-env normalization",
+		},
 	}
 
 	for _, tc := range cases {
@@ -269,6 +320,80 @@ func TestDeploymentValidate(t *testing.T) {
 			obj := validDeployment()
 			tc.mutate(obj)
 			err := obj.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+
+	overrideDep := validDeployment()
+	overrideDep.Spec.Agent.MCPServerRefs = []LocalRef{{Name: "foo-bar"}}
+	overrideDep.Spec.Agent.MCPServers = []InlineMCPServerSpec{
+		{Name: "foo-bar", AgenticRunnerMCPServerSpec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com/override"}},
+	}
+	if err := overrideDep.Validate(); err != nil {
+		t.Fatalf("expected exact-name inline MCP override to pass validation, got %v", err)
+	}
+}
+
+func TestMCPServerValidate(t *testing.T) {
+	httpSrv := &AgenticRunnerMCPServer{
+		Metadata: ObjectMeta{Name: "internal-docs", Namespace: "actions-runners"},
+		Spec: AgenticRunnerMCPServerSpec{
+			URL:           "http://docs-mcp.platform.svc.cluster.local:8080/mcp",
+			AuthSecretRef: &SecretRef{Name: "docs-mcp-token"},
+			AgentsMD:      "Use internal-docs.",
+		},
+	}
+	if err := httpSrv.Validate(); err != nil {
+		t.Fatalf("expected valid remote HTTP MCP server, got %v", err)
+	}
+
+	stdioSrv := &AgenticRunnerMCPServer{
+		Metadata: ObjectMeta{Name: "local-tool", Namespace: "actions-runners"},
+		Spec: AgenticRunnerMCPServerSpec{
+			Command: "/usr/local/bin/my-mcp",
+			Args:    []string{"--stdio"},
+		},
+	}
+	if err := stdioSrv.Validate(); err != nil {
+		t.Fatalf("expected valid stdio MCP server, got %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		srv     AgenticRunnerMCPServer
+		wantErr string
+	}{
+		{
+			name:    "invalid name",
+			srv:     AgenticRunnerMCPServer{Metadata: ObjectMeta{Name: "-bad"}, Spec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com"}},
+			wantErr: "metadata.name",
+		},
+		{
+			name:    "both url and command set",
+			srv:     AgenticRunnerMCPServer{Metadata: ObjectMeta{Name: "docs"}, Spec: AgenticRunnerMCPServerSpec{URL: "https://mcp.example.com", Command: "mcp"}},
+			wantErr: "exactly one of url or command",
+		},
+		{
+			name:    "neither url nor command set",
+			srv:     AgenticRunnerMCPServer{Metadata: ObjectMeta{Name: "docs"}},
+			wantErr: "exactly one of url or command",
+		},
+		{
+			name:    "command contains spaces",
+			srv:     AgenticRunnerMCPServer{Metadata: ObjectMeta{Name: "docs"}, Spec: AgenticRunnerMCPServerSpec{Command: "npx -y foo"}},
+			wantErr: "without whitespace",
+		},
+		{
+			name:    "authSecretRef on stdio server",
+			srv:     AgenticRunnerMCPServer{Metadata: ObjectMeta{Name: "docs"}, Spec: AgenticRunnerMCPServerSpec{Command: "/usr/local/bin/mcp", AuthSecretRef: &SecretRef{Name: "tok"}}},
+			wantErr: "only valid when url is set",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.srv.Validate()
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}

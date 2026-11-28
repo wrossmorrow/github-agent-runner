@@ -135,5 +135,48 @@ func writePiConfigDir(cfg Config, req Request, agentsMD, gatewayToken, sessionID
 		}
 	}
 
+	if len(cfg.MCPServers) > 0 {
+		mcpMap := make(map[string]map[string]any, len(cfg.MCPServers))
+		for _, srv := range cfg.MCPServers {
+			name := strings.TrimSpace(srv.Name)
+			if name == "" {
+				continue
+			}
+			entry := map[string]any{}
+			if u := strings.TrimSpace(srv.URL); u != "" {
+				entry["url"] = u
+				hdrs := make(map[string]string, len(srv.Headers)+1)
+				for k, v := range srv.Headers {
+					hdrs[k] = v
+				}
+				if envName := strings.TrimSpace(srv.AuthTokenEnv); envName != "" {
+					if tok := strings.TrimSpace(os.Getenv(envName)); tok != "" {
+						hdrs["Authorization"] = "Bearer " + tok
+					}
+				}
+				if len(hdrs) > 0 {
+					entry["headers"] = hdrs
+				}
+			} else if cmd := strings.TrimSpace(srv.Command); cmd != "" {
+				entry["command"] = cmd
+				if len(srv.Args) > 0 {
+					entry["args"] = srv.Args
+				}
+			}
+			mcpMap[name] = entry
+		}
+		if len(mcpMap) > 0 {
+			raw, err := json.MarshalIndent(map[string]any{"mcpServers": mcpMap}, "", "  ")
+			if err != nil {
+				_ = os.RemoveAll(dir)
+				return "", fmt.Errorf("marshaling mcp.json: %w", err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "mcp.json"), append(raw, '\n'), 0o600); err != nil {
+				_ = os.RemoveAll(dir)
+				return "", fmt.Errorf("writing mcp.json: %w", err)
+			}
+		}
+	}
+
 	return dir, nil
 }

@@ -83,3 +83,4 @@ containerize-usage-sink tag="latest":
 sync-chart-crds:
     cp config/crd/agenticrunnerdeployments.yaml charts/agentrunner-controller/crds/agenticrunnerdeployments.yaml
     cp config/crd/agenticrunnertoolchains.yaml charts/agentrunner-controller/crds/agenticrunnertoolchains.yaml
+    cp config/crd/agenticrunnermcpservers.yaml charts/agentrunner-controller/crds/agenticrunnermcpservers.yaml
