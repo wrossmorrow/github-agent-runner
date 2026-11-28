@@ -626,6 +626,8 @@ func TestIsInternalHost(t *testing.T) {
 		{host: "10.0.0.5", want: true},
 		{host: "192.168.1.10", want: true},
 		{host: "::1", want: true},
+		{host: "169.254.169.254", want: false},
+		{host: "fe80::1", want: false},
 		{host: "mcp.linear.app", want: false},
 		{host: "8.8.8.8", want: false},
 		{host: "2001:4860:4860::8888", want: false},

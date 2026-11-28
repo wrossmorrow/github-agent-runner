@@ -207,7 +207,7 @@ spec:
 ### How It Wires Through the Stack
 1. **Controller (`pkg/controller/`)**: Watches `AgenticRunnerMCPServer` resources in the deployment's namespace (matching the `AgenticRunnerToolchain` watch pattern) and re-reconciles referencing deployments when an MCP server changes.
 2. **Renderer (`pkg/render/`)**:
-   - Extracts every remote `url` hostname/port into Squid `allowed_domains` and `NetworkPolicy` egress ports, and adds only in-cluster/internal hosts (`.svc.cluster.local`, `.svc`, `.internal`, `host.docker.internal`, private/loopback IPs) to `NO_PROXY` / `http.nonProxyHosts` so external HTTPS MCP servers route through Squid for allowlist enforcement and `access.log` auditing.
+   - Extracts every remote `url` hostname/port into Squid `allowed_domains` and `NetworkPolicy` egress ports, and adds only in-cluster/internal hosts (single-label service names, `.svc.cluster.local`, `.svc`, `.internal`, `host.docker.internal`, private/loopback IPs) to `NO_PROXY` / `http.nonProxyHosts` so external HTTPS MCP servers route through Squid for allowlist enforcement and `access.log` auditing.
    - Injects `authSecretRef` tokens into the `agent` sidecar environment (`AGENTRUNNER_MCP_TOKEN_<UPPER_NAME>`), never into the stock `runner` container.
    - Emits resolved MCP metadata into `config.json` and appends each server's `agentsMd` fragment into `/etc/agentrunner/`.
 3. **Sidecar (`cmd/agentrunnerd/`, `pkg/review/`)**:

@@ -750,7 +750,7 @@ func isInternalHost(host string) bool {
 		return false
 	}
 	if addr, err := netip.ParseAddr(h); err == nil {
-		return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast()
+		return addr.IsLoopback() || addr.IsPrivate()
 	}
 	return !strings.Contains(h, ".") ||
 		h == "host.docker.internal" ||
