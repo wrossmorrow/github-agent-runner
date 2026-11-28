@@ -6,6 +6,7 @@ package render
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strconv"
@@ -453,7 +454,7 @@ func buildAutoscalingRunnerSet(
 	seenNoProxy := map[string]struct{}{"localhost": {}, "127.0.0.1": {}, "::1": {}}
 	addNoProxy := func(rawURL string) {
 		h := gatewayHost(rawURL)
-		if h == "" {
+		if h == "" || !isInternalHost(h) {
 			return
 		}
 		if _, ok := seenNoProxy[h]; ok {
@@ -741,6 +742,21 @@ func gatewayHost(endpoint string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(u.Hostname()))
+}
+
+func isInternalHost(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if h == "" {
+		return false
+	}
+	if addr, err := netip.ParseAddr(h); err == nil {
+		return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast()
+	}
+	return !strings.Contains(h, ".") ||
+		h == "host.docker.internal" ||
+		strings.HasSuffix(h, ".svc.cluster.local") ||
+		strings.HasSuffix(h, ".svc") ||
+		strings.HasSuffix(h, ".internal")
 }
 
 func extractRepoName(configURL string) string {
