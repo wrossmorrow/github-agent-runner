@@ -103,6 +103,28 @@ func TestHealthAndReviewStreaming(t *testing.T) {
 			t.Fatalf("unexpected error trailer: %+v (%s)", trailer, last)
 		}
 	})
+
+	t.Run("error path falls back to request prNumber", func(t *testing.T) {
+		mux := newMux(&stubExecutor{
+			outcome: &review.Outcome{SessionID: "sess-err-pr", Turns: 1},
+			err:     fmt.Errorf("gateway unreachable"),
+		}, v1alpha1.AgentModeReadOnly)
+
+		body := strings.NewReader(`{"workspace":"/home/runner/_work/repo","instructions":"check tests","prNumber":77}`)
+		req := httptest.NewRequest(http.MethodPost, "/run", body)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+		last := lines[len(lines)-1]
+		var trailer resultTrailer
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(last, "AGENTRUNNER_RESULT=")), &trailer); err != nil {
+			t.Fatalf("unmarshal error trailer: %v", err)
+		}
+		if trailer.PRNumber != 77 || trailer.SessionID != "sess-err-pr" {
+			t.Fatalf("expected PRNumber=77 fallback in error trailer, got %+v", trailer)
+		}
+	})
 }
 
 func TestUnsupportedModesReturn501(t *testing.T) {
