@@ -130,6 +130,7 @@ func newMux(exec reviewExecutor, mode string) http.Handler {
 
 type resultTrailer struct {
 	SessionID string `json:"sessionId,omitempty"`
+	PRNumber  int    `json:"prNumber,omitempty"`
 	ExitCode  int    `json:"exitCode"`
 	Verdict   string `json:"verdict,omitempty"`
 	Summary   string `json:"summary,omitempty"`
@@ -187,12 +188,14 @@ func handleRun(exec reviewExecutor, mode string) http.HandlerFunc {
 			trailer = resultTrailer{ExitCode: 1, Error: err.Error()}
 			if outcome != nil {
 				trailer.SessionID = outcome.SessionID
+				trailer.PRNumber = outcome.PRNumber
 				trailer.Turns = outcome.Turns
 			}
 			_, _ = fmt.Fprintf(fw, "::error::%s\n", err.Error())
 		} else {
 			trailer = resultTrailer{
 				SessionID: outcome.SessionID,
+				PRNumber:  outcome.PRNumber,
 				ExitCode:  outcome.ExitCode,
 				Verdict:   outcome.Result.Verdict,
 				Summary:   outcome.Result.Summary,

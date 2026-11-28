@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -216,11 +218,12 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 	}
 
 	if req.Output == OutputRevertPR || req.OpenPR {
-		exists, err := hasOpenPR(ctx, ghBin, token, req.Repo, branch)
+		existingPR, err := findOpenPRNumber(ctx, ghBin, token, req.Repo, branch)
 		if err != nil {
 			return err
 		}
-		if exists {
+		if existingPR > 0 {
+			res.OpenedPRNumber = existingPR
 			return nil
 		}
 		base := strings.TrimSpace(req.BaseRef)
@@ -236,14 +239,32 @@ func (p *GhPoster) postBranchCommit(ctx context.Context, ghBin, token string, re
 			"--title", title,
 			"--body", prBody,
 		}
-		if _, err := runGH(ctx, ghBin, token, args, nil); err != nil {
+		out, err := runGH(ctx, ghBin, token, args, nil)
+		if err != nil {
 			return err
+		}
+		if createdPR := parsePRNumberFromURL(string(out)); createdPR > 0 {
+			res.OpenedPRNumber = createdPR
 		}
 	}
 	return nil
 }
 
-func hasOpenPR(ctx context.Context, ghBin, token, repo, headBranch string) (bool, error) {
+var prURLNumberRegex = regexp.MustCompile(`/pull/([0-9]+)(?:[^0-9]|$)`)
+
+func parsePRNumberFromURL(raw string) int {
+	m := prURLNumberRegex.FindStringSubmatch(raw)
+	if len(m) != 2 {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+func findOpenPRNumber(ctx context.Context, ghBin, token, repo, headBranch string) (int, error) {
 	args := []string{
 		"pr", "list",
 		"--repo", repo,
@@ -254,15 +275,18 @@ func hasOpenPR(ctx context.Context, ghBin, token, repo, headBranch string) (bool
 	}
 	out, err := runGH(ctx, ghBin, token, args, nil)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	var prs []struct {
 		Number int `json:"number"`
 	}
 	if err := json.Unmarshal(out, &prs); err != nil {
-		return false, fmt.Errorf("parsing open PR check for %q: %w", headBranch, err)
+		return 0, fmt.Errorf("parsing open PR check for %q: %w", headBranch, err)
 	}
-	return len(prs) > 0, nil
+	if len(prs) == 0 || prs[0].Number <= 0 {
+		return 0, nil
+	}
+	return prs[0].Number, nil
 }
 
 func runGit(ctx context.Context, workspace, githubToken string, args ...string) ([]byte, error) {

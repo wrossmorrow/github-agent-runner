@@ -173,12 +173,16 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 			case ctx.Err() == context.DeadlineExceeded:
 				endReason = "timeout"
 			}
+			prNumber := req.PRNumber
+			if outcome != nil && outcome.PRNumber > 0 {
+				prNumber = outcome.PRNumber
+			}
 			meta := SessionArchiveMetadata{
 				SessionID:   sessionID,
 				SessionKind: sessionKind,
 				SessionName: sessionName,
 				Repo:        req.Repo,
-				PRNumber:    req.PRNumber,
+				PRNumber:    prNumber,
 				IssueNumber: req.IssueNumber,
 				RunID:       req.RunID,
 				HeadSHA:     req.HeadSHA,
@@ -271,8 +275,14 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 		exitCode = 1
 	}
 
+	prNumber := req.PRNumber
+	if reviewRes.OpenedPRNumber > 0 {
+		prNumber = reviewRes.OpenedPRNumber
+	}
+
 	outcome = &Outcome{
 		SessionID: sessionID,
+		PRNumber:  prNumber,
 		Result:    reviewRes,
 		ExitCode:  exitCode,
 		Turns:     turns,

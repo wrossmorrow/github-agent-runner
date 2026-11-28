@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,14 +227,18 @@ func TestHelperPiReview(t *testing.T) {
 }
 
 type mockPoster struct {
-	called bool
-	req    Request
-	res    *Result
+	called         bool
+	req            Request
+	res            *Result
+	openedPRNumber int
 }
 
 func (m *mockPoster) PostReview(_ context.Context, req Request, res *Result) error {
 	m.called = true
 	m.req = req
+	if m.openedPRNumber > 0 {
+		res.OpenedPRNumber = m.openedPRNumber
+	}
 	m.res = res
 	return nil
 }
@@ -840,5 +845,70 @@ func TestWritePiConfigDirWritesMCPJSON(t *testing.T) {
 	local, ok := parsed.MCPServers["local-tool"]
 	if !ok || local.Command != "/usr/local/bin/local-tool" || len(local.Args) != 1 || local.Args[0] != "--stdio" {
 		t.Fatalf("unexpected stdio mcp.json entry: %+v", local)
+	}
+}
+
+func TestRunnerBackfillsOpenedPRNumberInOutcomeAndArchive(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GO_WANT_REVIEW_HELPER", "1")
+	t.Setenv("HELPER_MODE", "")
+
+	metaCh := make(chan SessionArchiveMetadata, 1)
+	sinkClient := &http.Client{
+		Transport: handlerRoundTripper{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var meta SessionArchiveMetadata
+			if mr, err := r.MultipartReader(); err == nil {
+				for {
+					part, err := mr.NextPart()
+					if err != nil {
+						break
+					}
+					if part.FormName() == "metadata" {
+						_ = json.NewDecoder(part).Decode(&meta)
+					}
+				}
+			}
+			select {
+			case metaCh <- meta:
+			default:
+			}
+			w.WriteHeader(http.StatusAccepted)
+		})},
+	}
+
+	poster := &mockPoster{openedPRNumber: 43}
+	runner := &Runner{
+		Config: Config{
+			PiBin:               exe,
+			PiArgs:              []string{"-test.run=TestHelperPiReview"},
+			Mode:                v1alpha1.AgentModeWriteBranch,
+			SessionSinkEndpoint: "http://session-hub.local/v1/sessions",
+		},
+		Poster:            poster,
+		SessionSinkClient: sinkClient,
+	}
+
+	_, repo := initTestRepoWithBareRemote(t)
+	outcome, err := runner.Run(context.Background(), Request{
+		Workspace:    repo,
+		Instructions: "Solve issue #12",
+		Output:       OutputBranchCommit,
+		Repo:         "org/repo",
+		IssueNumber:  12,
+		OpenPR:       true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Runner.Run failed: %v", err)
+	}
+	if outcome.PRNumber != 43 {
+		t.Fatalf("outcome.PRNumber = %d, want 43", outcome.PRNumber)
+	}
+
+	meta := <-metaCh
+	if meta.PRNumber != 43 || meta.IssueNumber != 12 {
+		t.Fatalf("unexpected uploaded archive metadata: pr=%d issue=%d", meta.PRNumber, meta.IssueNumber)
 	}
 }

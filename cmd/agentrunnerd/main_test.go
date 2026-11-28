@@ -33,6 +33,7 @@ func TestHealthAndReviewStreaming(t *testing.T) {
 	mux := newMux(&stubExecutor{
 		outcome: &review.Outcome{
 			SessionID: "sess-uuid-1234",
+			PRNumber:  43,
 			ExitCode:  1,
 			Turns:     3,
 			Result: &review.Result{
@@ -76,7 +77,7 @@ func TestHealthAndReviewStreaming(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(last, "AGENTRUNNER_RESULT=")), &trailer); err != nil {
 			t.Fatalf("unmarshal trailer: %v", err)
 		}
-		if trailer.ExitCode != 1 || trailer.Verdict != "REQUEST_CHANGES" || trailer.Findings != 1 || trailer.SessionID != "sess-uuid-1234" {
+		if trailer.ExitCode != 1 || trailer.Verdict != "REQUEST_CHANGES" || trailer.Findings != 1 || trailer.SessionID != "sess-uuid-1234" || trailer.PRNumber != 43 {
 			t.Fatalf("unexpected trailer: %+v", trailer)
 		}
 	}
@@ -98,8 +99,8 @@ func TestHealthAndReviewStreaming(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(last, "AGENTRUNNER_RESULT=")), &trailer); err != nil {
 			t.Fatalf("unmarshal error trailer: %v", err)
 		}
-		if trailer.ExitCode != 1 || trailer.SessionID != "sess-err-999" || trailer.Turns != 2 || !strings.Contains(trailer.Error, "model timed out") {
-			t.Fatalf("unexpected error trailer: %+v", trailer)
+		if trailer.ExitCode != 1 || trailer.SessionID != "sess-err-999" || trailer.Turns != 2 || trailer.PRNumber != 0 || strings.Contains(last, `"prNumber"`) || !strings.Contains(trailer.Error, "model timed out") {
+			t.Fatalf("unexpected error trailer: %+v (%s)", trailer, last)
 		}
 	})
 }
