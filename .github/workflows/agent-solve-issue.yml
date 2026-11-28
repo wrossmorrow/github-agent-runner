@@ -17,18 +17,30 @@ on:
         required: false
         type: string
         default: ""
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
   issues: read
 
 concurrency:
-  group: agent-solve-issue-${{ inputs.issue_number }}
+  group: agent-solve-issue-${{ inputs.issue_number || github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
   solve:
-    name: "Solve Issue #${{ inputs.issue_number }}"
+    name: "Solve Issue #${{ inputs.issue_number || github.event.issue.number }}"
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'issue_comment' &&
+          !github.event.issue.pull_request &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+          startsWith(github.event.comment.body, '/solve')
+        )
+      }}
     runs-on: github-agent-runner-author
     timeout-minutes: 20
     steps:
@@ -40,13 +52,44 @@ jobs:
       - id: issue
         env:
           GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
           TARGET_BRANCH: ${{ inputs.branch }}
           EXTRA_INSTRUCTIONS: ${{ inputs.extra_instructions }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           set -euo pipefail
           if ! printf '%s' "$ISSUE_NUMBER" | grep -Eq '^[0-9]+$'; then
             echo "::error::issue_number must be numeric, got: $ISSUE_NUMBER"
+            exit 1
+          fi
+
+          extra="$EXTRA_INSTRUCTIONS"
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            if ! printf '%s' "$COMMENT_BODY" | grep -Eq '^/solve([[:space:]]|$)'; then
+              echo "::error::comment trigger must start with /solve"
+              exit 1
+            fi
+            extra="$(printf '%s' "$COMMENT_BODY" | sed -E '1s#^/solve[[:space:]]*##')"
+          fi
+
+          branch="$TARGET_BRANCH"
+          if [ -z "$branch" ]; then
+            branch="bot/issue-${ISSUE_NUMBER}"
+          fi
+          case "$branch" in
+            -*|/*|*/|*.|*..*|*//*)
+              echo "::error::invalid target branch: $branch"
+              exit 1
+              ;;
+          esac
+          if ! printf '%s' "$branch" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+            echo "::error::invalid target branch characters: $branch"
+            exit 1
+          fi
+          lower_branch="$(printf '%s' "$branch" | tr '[:upper:]' '[:lower:]')"
+          if [ "$lower_branch" = "main" ] || [ "$lower_branch" = "master" ] || [ "$lower_branch" = "head" ]; then
+            echo "::error::refusing protected target branch: $branch"
             exit 1
           fi
 
@@ -59,11 +102,6 @@ jobs:
           issue_body="$(printf '%s' "$issue_json" | jq -r '.body // ""')"
           issue_url="$(printf '%s' "$issue_json" | jq -r '.html_url')"
 
-          branch="$TARGET_BRANCH"
-          if [ -z "$branch" ]; then
-            branch="bot/issue-${ISSUE_NUMBER}"
-          fi
-
           delim="AGENTRUNNER_ISSUE_EOF_$$_${RANDOM}"
           {
             printf 'branch=%s\n' "$branch"
@@ -73,8 +111,8 @@ jobs:
             if [ -n "$issue_body" ]; then
               printf 'Issue description:\n%s\n\n' "$issue_body"
             fi
-            if [ -n "$EXTRA_INSTRUCTIONS" ]; then
-              printf 'Additional guidance:\n%s\n\n' "$EXTRA_INSTRUCTIONS"
+            if [ -n "$extra" ]; then
+              printf 'Additional guidance:\n%s\n\n' "$extra"
             fi
             cat <<'REQ_EOF'
           Requirements:
