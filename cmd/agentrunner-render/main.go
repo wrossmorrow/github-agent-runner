@@ -125,7 +125,7 @@ func exampleObjects() (*v1alpha1.AgenticRunnerDeployment, *v1alpha1.AgenticRunne
 				Limits:   map[string]string{"cpu": "4", "memory": "8Gi"},
 			},
 			EgressAllowlist: []string{"proxy.golang.org", "sum.golang.org"},
-			AgentsMD:        "Toolchain: Go 1.26, protoc, buf, git, gh.\nPrefer `go test -race ./...` when validating Go changes.",
+			AgentsMD:        "Toolchain: Go 1.26, golangci-lint, protoc, buf, git, gh.\nPrefer `go test -race ./...` when validating Go changes.",
 		},
 	}
 	dep := &v1alpha1.AgenticRunnerDeployment{

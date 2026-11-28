@@ -15,5 +15,5 @@ spec:
     - proxy.golang.org
     - sum.golang.org
   agentsMd: |
-    Toolchain: Go 1.26, protoc, buf, git, gh.
+    Toolchain: Go 1.26, golangci-lint, protoc, buf, git, gh.
     Prefer `go test -race ./...` when validating Go changes.
