@@ -165,6 +165,7 @@ jobs:
 | `turns` | Number of agent turns executed |
 | `exit-code` | Exit code determined from `fail-on` threshold |
 | `session-id` | Unique session UUID generated for this agent run |
+| `pr-number` | Pull request number targeted or opened during this run (empty when no PR is associated or on hard pre-trailer failure) |
 
 ---
 

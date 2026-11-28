@@ -750,14 +750,18 @@ func TestRunnerWriteOutputRejectsDirtyWorkspace(t *testing.T) {
 		},
 	}
 
-	_, err := runner.Run(context.Background(), Request{
+	outcome, err := runner.Run(context.Background(), Request{
 		Workspace:    repo,
 		Instructions: "Fix tests",
 		Output:       OutputBranchCommit,
 		TargetBranch: "bot/fix-dirty",
+		PRNumber:     19,
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "pre-existing uncommitted changes") {
 		t.Fatalf("expected dirty workspace error before starting pi, got %v", err)
+	}
+	if outcome == nil || outcome.PRNumber != 19 {
+		t.Fatalf("expected PRNumber=19 preserved on early dirty-workspace error outcome, got %+v", outcome)
 	}
 
 	_, nonGitErr := runner.Run(context.Background(), Request{

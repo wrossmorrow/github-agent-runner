@@ -84,10 +84,10 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 	if IsWriteOutput(req.Output) {
 		dirty, err := listChangedPaths(ctx, req.Workspace)
 		if err != nil {
-			return nil, fmt.Errorf("checking workspace git status before write-branch run: %w", err)
+			return &Outcome{PRNumber: req.PRNumber}, fmt.Errorf("checking workspace git status before write-branch run: %w", err)
 		}
 		if len(dirty) > 0 {
-			return nil, fmt.Errorf("workspace has pre-existing uncommitted changes before write-branch run (%d path(s), e.g. %q); ensure the workspace is clean before invoking write outputs", len(dirty), dirty[0])
+			return &Outcome{PRNumber: req.PRNumber}, fmt.Errorf("workspace has pre-existing uncommitted changes before write-branch run (%d path(s), e.g. %q); ensure the workspace is clean before invoking write outputs", len(dirty), dirty[0])
 		}
 	}
 	if req.Output == OutputReleaseDraft && req.BaseRef == "" {
@@ -104,7 +104,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	agentsMD, err := AssembleSystemPrompt(r.Config.AgentsDirs, r.Config.Mode, req.Output)
 	if err != nil {
-		return nil, err
+		return &Outcome{PRNumber: req.PRNumber}, err
 	}
 
 	diffStat := readDiffStat(ctx, req.Workspace, req.BaseRef, req.HeadSHA)
@@ -115,7 +115,7 @@ func (r *Runner) Run(ctx context.Context, req Request, logOut io.Writer) (*Outco
 
 	sessionID, err := resolveSessionID(req.SessionID)
 	if err != nil {
-		return nil, err
+		return &Outcome{PRNumber: req.PRNumber}, err
 	}
 	req.SessionID = sessionID
 	sessionKind := deriveSessionKind(r.Config.Mode, req.Output)
